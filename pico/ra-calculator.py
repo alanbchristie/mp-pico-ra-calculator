@@ -65,7 +65,7 @@ if 0x52 in _DEVICE_ADDRESSES:
 if _RTC_ADDRESS:
     print(f'RTC  device={hex(_RTC_ADDRESS)}')
 else:
-    print(f'RTC (not found)')
+    print('RTC (not found)')
 assert _RTC_ADDRESS
 
 # Is there a FRAM device (at 0x50)?
@@ -75,7 +75,7 @@ if 0x50 in _DEVICE_ADDRESSES:
 if _FRAM_ADDRESS:
     print(f'FRAM device={hex(_FRAM_ADDRESS)}')
 else:
-    print(f'FRAM (not found)')
+    print('FRAM (not found)')
 assert _FRAM_ADDRESS
 
 # Integer brightness limits (1..20).
