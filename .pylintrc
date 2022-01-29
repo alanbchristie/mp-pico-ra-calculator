@@ -1,0 +1,13 @@
+[MESSAGES CONTROL]
+disable=broad-except,
+        invalid-name,
+        missing-class-docstring,
+        missing-function-docstring,
+        simplifiable-if-statement,
+        too-many-arguments,
+        too-many-branches,
+        too-many-instance-attributes,
+        too-many-lines,
+        too-many-locals,
+        too-many-return-statements,
+        trailing-whitespace
