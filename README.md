@@ -15,9 +15,9 @@ It is designed to run on a Raspberry Pi [Pico] with the assistance of I2C-based
 [Real-Time Clock] module, a pair of [dot-matrix] displays, and a 32KByte [FRAM]
 memory module.
 
-It's essentially a handly real-time implementation of the 'trick' described in
-my related repository on portable, battery-operated hardware that can be used
-in the field: -
+It's essentially a handly real-time implementation for use on a portable,
+battery-operated hardware that can be used in the field. It's based on the
+'trick' described in my related repository: -
 
 - https://github.com/alanbchristie/ra-converter
 
