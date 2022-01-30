@@ -1011,15 +1011,16 @@ class StateMachine:
     S_DISPLAY_CLOCK: int = 3
     S_DISPLAY_C_DATE: int = 4
     S_DISPLAY_C_YEAR: int = 5
-    S_PROGRAM_RA_H: int = 6
-    S_PROGRAM_RA_M: int = 7
+    S_PROGRAM_RA_TARGET_H: int = 6
+    S_PROGRAM_RA_TARGET_M: int = 7
     S_PROGRAM_CLOCK: int = 8
     S_PROGRAM_C_DAY: int = 9
     S_PROGRAM_C_MONTH: int = 10
     S_PROGRAM_C_YEAR: int = 11
     
     TIMER_PERIOD_MS: int = 500
-    # Number of timer ticks to hold the display (8 is 4 seconds)
+    # Number of timer ticks to hold the display before returning to idle
+    # (8 is 4 seconds when the timer is 500mS)
     HOLD_TICKS: int = 8
     
     def __init__(self, display: LTP305_Pair, ra_fram: RA_FRAM):
