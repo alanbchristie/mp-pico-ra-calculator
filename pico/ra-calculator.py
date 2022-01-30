@@ -600,16 +600,9 @@ class LTP305_Pair:
         """
 
         if not hour or not minute:
-            # Read the RTC until we get something
-            new_time: str = ''
-            while not new_time:
-                if self._rtc.update_time():
-                    new_time = self._rtc.string_time()
-                else:
-                    # Sleep (less than a second)
-                    time.sleep(0.5)
+            new_time: str = self.get_time()
             # The time is given to us as 'HH:MM:SS',
-            # we just need HH:MM, which we'll call 'clock'.
+            # we just need HHMM, which we'll call 'clock'.
             clock: str = new_time[:2] + new_time[3:5]
         else:
             # User-provided value
@@ -619,6 +612,20 @@ class LTP305_Pair:
         assert len(clock) == 4
         self.show(clock)
 
+    def get_time(self) -> str:
+        """Returns the time as clock 'HH:MM:SS'.
+        """
+        # Read the RTC until we get something
+        new_time: str = ''
+        while not new_time:
+            if self._rtc.update_time():
+                new_time = self._rtc.string_time()
+            else:
+                # Sleep (less than a second)
+                time.sleep(0.5)
+        # The time is given to us as 'HH:MM:SS'
+        return new_time
+        
     def show_ra_target(self, ra_target) -> None:
         """Displays the raw RA target value.
         """
@@ -1355,7 +1362,8 @@ class StateMachine:
         self._start_timer(to_idle=False)
 
         # What is the value we're programming?
-        self._programming_value = '0000'
+        ra_target: RA = self._ra_fram.read_ra_target()
+        self._programming_value = f'{ra_target.h:02d}{ra_target.m:02d}'
         self._display.show(self._programming_value)
         
         return True
@@ -1367,25 +1375,10 @@ class StateMachine:
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_RA_TARGET_M
         
-        # Clear any countdown timer
-        # While programming there is no idle countdown.
-        self._to_idle_countdown = 0
         # Set prigramming mode
-        self._programming = True
         self._programming_left = False
         self._programming_right = True
-        self._programming_left_on = True
-        self._programming_right_on = True
-        self._programming_state = StateMachine.S_DISPLAY_RA_TARGET
 
-        # Start the timer
-        # (used to flash the appropriate part of the display)
-        self._start_timer(to_idle=False)
-
-        # What is the value we're programming?
-        self._programming_value = '0000'
-        self._display.show(self._programming_value)
-        
         return True
 
     def _to_program_clock(self) -> bool:
@@ -1411,37 +1404,12 @@ class StateMachine:
         self._start_timer(to_idle=False)
 
         # What is the value we're programming?
-        self._programming_value = '1111'
+        rtc_time: str = self._display.get_time()
+        # The time is given to us as 'HH:MM:SS',
+        # we just need HHMM...
+        self._programming_value = rtc_time[:2] + rtc_time[3:5]
         self._display.show(self._programming_value)
         
-        return True
-
-    def _to_program_calibration_month(self) -> bool:
-        
-        print('_to_program_calibration_month()')
-
-        # Always set the new state
-        self._state = StateMachine.S_PROGRAM_C_MONTH
-        
-        # Clear any countdown timer
-        # While programming there is no idle countdown.
-        self._to_idle_countdown = 0
-        # Set prigramming mode
-        self._programming = True
-        self._programming_left = False
-        self._programming_right = True
-        self._programming_left_on = True
-        self._programming_right_on = True
-        self._programming_state = StateMachine.S_DISPLAY_C_DATE
-
-        # Start the timer
-        # (used to flash the appropriate part of the display)
-        self._start_timer(to_idle=False)
-
-        # What is the value we're programming?
-        self._programming_value = '2222'
-        self._display.show(self._programming_value)
-
         return True
 
     def _to_program_calibration_day(self) -> bool:
@@ -1467,8 +1435,22 @@ class StateMachine:
         self._start_timer(to_idle=False)
 
         # What is the value we're programming?
-        self._programming_value = '2222'
+        c_date: CalibrationDate = self._ra_fram.read_calibration_date()
+        self._programming_value = f'{c_date.d:2d}{c_date.m:2d}'
         self._display.show(self._programming_value)
+
+        return True
+
+    def _to_program_calibration_month(self) -> bool:
+        
+        print('_to_program_calibration_month()')
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_C_MONTH
+        
+        # Set prigramming mode
+        self._programming_left = False
+        self._programming_right = True
 
         return True
 
@@ -1495,7 +1477,8 @@ class StateMachine:
         self._start_timer(to_idle=False)
 
         # What is the value we're programming?
-        self._programming_value = '3333'
+        c_date: CalibrationDate = self._ra_fram.read_calibration_date()
+        self._programming_value = f'{c_date.y}'
         self._display.show(self._programming_value)
 
         return True
