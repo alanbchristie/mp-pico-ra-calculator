@@ -599,8 +599,6 @@ class LTP305_Pair:
         """Displays the current RTC unless an hour and minute are specified.
         """
 
-        clock: str = ''
-
         if not hour or not minute:
             # Read the RTC until we get something
             new_time: str = ''
