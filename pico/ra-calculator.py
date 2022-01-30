@@ -45,6 +45,12 @@ DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1, 2022)
 # Minutes in one day
 _DAY_MINUTES: int = 1440
 
+# Min/Max years
+# Min is limited to smallest 4 digits (1000)
+# Max must be limited largest 4 digits (9999)
+_MIN_YEAR: int = 2022
+_MAX_YEAR: int = 9999
+
 # Configured I2C Pins
 _SCL: int = 17
 _SDA: int = 16
@@ -961,14 +967,22 @@ def btn_2(pin: Pin) -> None:
     time or clibration values the values flash and the UP/DOWN buttons
     can be used to alter the displayed value.
 
-    Pressing the program button again saves the value. Presssing MODE cancels
-    the change.
+    Pressing the program button for at least 3 seconds saves the value.
+    Presssing MODE cancels the change.
     """
 
     pin.irq(handler=None)
     # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
+    # Measure the time pressed.
+    # Less than 3 seconds we insert a _CMD_BUTTON_2 command,
+    # for 3 seconds or more it's a _CMD_BUTTON_2_LONG command.
     if pin.value():
+        depressed: bool = True
+        while depressed:
+            time.sleep_ms(_BUTTON_DEBOUNCE_MS)
+            if not pin.value():
+                depressed = False
         _COMMAND_QUEUE.put(_CMD_BUTTON_2)
     pin.irq(handler=btn_2)
 
@@ -1069,10 +1083,11 @@ class StateMachine:
         self._programming_left_on: bool = False
         self._programming_right_on: bool = False
         # The value to present to the display when programming.
-        self._programming_value: str = ''
+        self._programming_value: Optional[str] = None
 
     def _clear_program_mode(self) -> None:
         self._programming = False
+        self._programming_value = None
 
     def _start_timer(self, to_idle: bool = True) -> None:
         """Starts the timer.
@@ -1089,7 +1104,115 @@ class StateMachine:
             self._timer.deinit()
             self._timer = None
         self._to_idle_countdown = 0
-            
+
+    def _program_up(self) -> None:
+        """Called when the 'UP' button has been pressed in program mode.
+        Here we need to appropriately increment the _programming_value.
+        """
+        if self._state == StateMachine.S_PROGRAM_C_YEAR:
+            # Increment until a maximum year.
+            new_year: int = int(self._programming_value)
+            if new_year < _MAX_YEAR:
+                new_year += 1
+            self._programming_value = f'{new_year}'
+        elif self._state == StateMachine.S_PROGRAM_CLOCK:
+            # Run the clock backwards
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            minute += 1
+            if minute > 59:
+                minute = 0
+                hour += 1
+                if hour > 23:
+                    hour = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
+            # Adjust the hours only
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            hour += 1
+            if hour > 23:
+                hour = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
+            # Adjust the minutes only
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            minute += 1
+            if minute > 59:
+                minute = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
+            # Adjust the minutes only
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            minute += 1
+            if minute > 59:
+                minute = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_C_MONTH:
+            # Adjust the month only
+            day: int = int(self._programming_value[:2])
+            month: int = int(self._programming_value[2:])
+            month += 1
+            if month > 12:
+                month = 1
+            self._programming_value = f'{day:2d}{month:2d}'
+        elif self._state == StateMachine.S_PROGRAM_C_DAY:
+            # Adjust the day only
+            day: int = int(self._programming_value[:2])
+            month: int = int(self._programming_value[2:])
+            day += 1
+            if day > 31:
+                day = 1
+            self._programming_value = f'{day:2d}{month:2d}'
+
+    def _program_down(self) -> None:
+        """Called when the 'DOWN' button has been pressed in program mode.
+        Here we need to appropriately decrement the _programming_value.
+        """
+        if self._state == StateMachine.S_PROGRAM_C_YEAR:
+            # Decrement until minimum year
+            new_year: int = int(self._programming_value)
+            if new_year > _MIN_YEAR:
+                new_year -= 1
+            self._programming_value = f'{new_year}'
+        elif self._state == StateMachine.S_PROGRAM_CLOCK:
+            # Run the clock backwards
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            minute -= 1
+            if minute < 0:
+                minute = 59
+                hour -= 1
+                if hour < 0:
+                    hour = 23
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
+            # Adjust the hours only
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            hour -= 1
+            if hour < 0:
+                hour = 23
+            self._programming_value = f'{hour:2d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_C_MONTH:
+            # Adjust the month only
+            day: int = int(self._programming_value[:2])
+            month: int = int(self._programming_value[2:])
+            month -= 1
+            if month < 1:
+                month = 12
+            self._programming_value = f'{day:2d}{month:2d}'
+        elif self._state == StateMachine.S_PROGRAM_C_DAY:
+            # Adjust the day only
+            day: int = int(self._programming_value[:2])
+            month: int = int(self._programming_value[2:])
+            day -= 1
+            if day < 1:
+                day = 31
+            self._programming_value = f'{day:2d}{month:2d}'
+    
     def process_command(self, command: int) -> bool:
         """Process a command, where the actions depend on the
         current 'state'.
@@ -1208,13 +1331,16 @@ class StateMachine:
             # "DOWN" button
 
             if not self._state in [StateMachine.S_IDLE]:
-                # Decrease display brightness,
-                # and reset the timer.
-                self._to_idle_countdown = StateMachine.HOLD_TICKS
-                if self._brightness > _MIN_BRIGHTNESS:
-                    self._brightness -= 1
-                    self._ra_fram.write_brightness(self._brightness)
-                    self._display.set_brightness(self._brightness)
+                if self._programming:
+                    self._program_down()
+                else:
+                    # Decrease display brightness,
+                    # and reset the timer.
+                    self._to_idle_countdown = StateMachine.HOLD_TICKS
+                    if self._brightness > _MIN_BRIGHTNESS:
+                        self._brightness -= 1
+                        self._ra_fram.write_brightness(self._brightness)
+                        self._display.set_brightness(self._brightness)
 
             return True
 
@@ -1222,13 +1348,16 @@ class StateMachine:
             # "UP" button
 
             if not self._state in [StateMachine.S_IDLE]:
-                # Increase display brightness,
-                # and reset the timer.
-                self._to_idle_countdown = StateMachine.HOLD_TICKS
-                if self._brightness < _MAX_BRIGHTNESS:
-                    self._brightness += 1
-                    self._ra_fram.write_brightness(self._brightness)
-                    self._display.set_brightness(self._brightness)
+                if self._programming:
+                    self._program_up()
+                else:
+                    # Increase display brightness,
+                    # and reset the timer.
+                    self._to_idle_countdown = StateMachine.HOLD_TICKS
+                    if self._brightness < _MAX_BRIGHTNESS:
+                        self._brightness += 1
+                        self._ra_fram.write_brightness(self._brightness)
+                        self._display.set_brightness(self._brightness)
                 
             return True
 
@@ -1361,10 +1490,11 @@ class StateMachine:
         # (used to flash the appropriate part of the display)
         self._start_timer(to_idle=False)
 
-        # What is the value we're programming?
-        ra_target: RA = self._ra_fram.read_ra_target()
-        self._programming_value = f'{ra_target.h:02d}{ra_target.m:02d}'
-        self._display.show(self._programming_value)
+        if not self._programming_value:
+            # What is the value we're programming?
+            ra_target: RA = self._ra_fram.read_ra_target()
+            self._programming_value = f'{ra_target.h:02d}{ra_target.m:02d}'
+            self._display.show(self._programming_value)
         
         return True
 
@@ -1434,10 +1564,11 @@ class StateMachine:
         # (used to flash the appropriate part of the display)
         self._start_timer(to_idle=False)
 
-        # What is the value we're programming?
-        c_date: CalibrationDate = self._ra_fram.read_calibration_date()
-        self._programming_value = f'{c_date.d:2d}{c_date.m:2d}'
-        self._display.show(self._programming_value)
+        if not self._programming_value:
+            # What is the value we're programming?
+            c_date: CalibrationDate = self._ra_fram.read_calibration_date()
+            self._programming_value = f'{c_date.d:2d}{c_date.m:2d}'
+            self._display.show(self._programming_value)
 
         return True
 
