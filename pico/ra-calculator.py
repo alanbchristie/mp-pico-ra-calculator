@@ -1068,10 +1068,15 @@ class StateMachine:
     def _clear_program_mode(self) -> None:
         self._programming = False
 
-    def _start_timer(self) -> None:
+    def _start_timer(self, to_idle: bool = True) -> None:
+        """Starts the timer.
+        If to_idle is True the timer is a countdown to idle.
+        where the mode will rever to idle when the countdown is complete.
+        """
         if self._timer is None:
             self._timer = Timer(period=StateMachine.TIMER_PERIOD_MS, callback=tick)
-        self._to_idle_countdown = StateMachine.HOLD_TICKS
+        if to_idle:
+            self._to_idle_countdown = StateMachine.HOLD_TICKS
             
     def _stop_timer(self) -> None:
         if self._timer:
@@ -1151,6 +1156,8 @@ class StateMachine:
                 self._programming = False
                 if self._programming_state == StateMachine.S_DISPLAY_CLOCK:
                     return self._to_display_clock()
+                if self._programming_state == StateMachine.S_DISPLAY_C_YEAR:
+                    return self._to_display_calibration_year()
 
             # Otherwise nothing to do
             return True
@@ -1160,14 +1167,13 @@ class StateMachine:
 
             # Into programming mode (from valid non-programming states)
             if self._state == StateMachine.S_DISPLAY_RA_TARGET:
-                print('PROGRAM (ra target)')
+                print('PROGRAM (ra target) [TBD]')
             if self._state == StateMachine.S_DISPLAY_CLOCK:
-                print('PROGRAM (clock)')
                 return self._to_program_clock()             
-            if self._state == StateMachine.S_DISPLAY_C_YEAR:
-                print('PROGRAM (calibration year)')
             if self._state == StateMachine.S_DISPLAY_C_DATE:
-                print('PROGRAM (calibration month)')
+                print('PROGRAM (calibration month) [TBD]')
+            if self._state == StateMachine.S_DISPLAY_C_YEAR:
+                return self._to_program_calibration_year()             
 
             # Out of programming mode (from programming states)
             # Here we commit the change and return to normal mode.
@@ -1313,6 +1319,8 @@ class StateMachine:
 
     def _to_program_clock(self) -> bool:
         
+        print('_to_program_clock()')
+
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_CLOCK
         
@@ -1329,16 +1337,18 @@ class StateMachine:
 
         # Start the timer
         # (used to flash the appropriate part of the display)
-        if self._timer is None:
-            self._timer = Timer(period=StateMachine.TIMER_PERIOD_MS, callback=tick)
+        self._start_timer(to_idle=False)
 
         # What is the value we're programming?
         self._programming_value = '2222'
+        self._display.show(self._programming_value)
         
         return True
 
-    def _to_program_year(self) -> bool:
+    def _to_program_calibration_year(self) -> bool:
         
+        print('_to_program_calibration_year()')
+
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_C_YEAR
         
@@ -1355,12 +1365,12 @@ class StateMachine:
 
         # Start the timer
         # (used to flash the appropriate part of the display)
-        if self._timer is None:
-            self._timer = Timer(period=StateMachine.TIMER_PERIOD_MS, callback=tick)
+        self._start_timer(to_idle=False)
 
         # What is the value we're programming?
         self._programming_value = '3333'
-        
+        self._display.show(self._programming_value)
+
         return True
 
 # Main ------------------------------------------------------------------------
