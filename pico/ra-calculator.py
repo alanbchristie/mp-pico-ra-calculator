@@ -1,4 +1,6 @@
 """The rea-time RA compensation calculator.
+
+To clear any stored values in the FRAM run _RA_FRAM.clear().
 """
 import time
 try:
@@ -17,10 +19,28 @@ from breakout_rtc import BreakoutRTC  # type: ignore
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
 
+# The Pico on-board LED
+ONBOARD_LED: Pin = Pin(25, Pin.OUT)
+
 # An RA value: hours and minutes.
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
 # A Calibration Date: day, month, year
 CalibrationDate: namedtuple = namedtuple('CalibrationDate', ('d', 'm', 'y'))
+
+# The target RA (Capell, the brightest star in the constellation of Auriga).
+# This is the Right Ascension of the target object.
+# If the scope is aligned south at midnight on the date of calibration,
+# this will be the value required on its RA axis.
+# We add the current time (if it's not midnight) to this value and
+# 4 minutes for each day since the calibration.
+DEFAULT_RA_TARGET: RA = RA(5, 16)
+
+# The date the telescope's RA axis was calibrated.
+# A tuple of day, month, year. We don't need the
+# calibrated RA axis value, just the date it was calibrated.
+# For each day beyond this (looping every 365 days) we add 4 minutes
+# to the calibrated value.
+DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1, 2022)
 
 # Minutes in one day
 _DAY_MINUTES: int = 1440
@@ -477,6 +497,9 @@ class LTP305_Pair:
         self.h_matrix = LTP305(i2c, address=address_h, brightness=self._brightness)
         self.m_matrix = LTP305(i2c, address=address_m, brightness=self._brightness)
         
+        self._h_is_on: bool = False
+        self._m_is_on: bool = False
+
     def set_brightness(self, brightness: int) -> None:
         assert brightness >= _MIN_BRIGHTNESS
         assert brightness <= _MAX_BRIGHTNESS
@@ -487,12 +510,22 @@ class LTP305_Pair:
         self.h_matrix.set_brightness(self._brightness, True)
         self.m_matrix.set_brightness(self._brightness, True)
 
-    def clear(self) -> None:
-        self.h_matrix.clear()
-        self.m_matrix.clear()
-        
-        self.h_matrix.show()
-        self.m_matrix.show()
+    def left_is_on(self) -> bool:
+        return self._h_is_on
+    
+    def right_is_on(self) -> bool:
+        return self._m_is_on
+    
+    def clear(self, left: bool = True, right: bool = True) -> None:
+        if left:
+            self.h_matrix.clear()
+            self.h_matrix.show()
+            self._h_is_on = False
+
+        if right:
+            self.m_matrix.clear()    
+            self.m_matrix.show()
+            self._m_is_on = False
 
     def show_ra(self, ra_target: RA, calibration_date: CalibrationDate)\
                -> None:
@@ -638,7 +671,9 @@ class LTP305_Pair:
         self.m_matrix.set_pair(ra[2:])
 
         self.h_matrix.show()
+        self._h_is_on = True
         self.m_matrix.show()
+        self._m_is_on = True
 
 
 class RA_FRAM:
@@ -657,20 +692,6 @@ class RA_FRAM:
 
     # Default brightness (lowest)
     DEFAULT_BRIGHTNESS: int = _MIN_BRIGHTNESS
-
-    # The target RA (Capella).
-    # This is the Right Ascension of the target object.
-    # If the scope is aligned south at midnight,
-    # this will be the value required on its RA axis.
-    # For every hour after midnight we add 1 hour to the RA.
-    DEFAULT_RA_TARGET: RA = RA(5, 16)
-
-    # The date the telescope's RA axis was calibrated?
-    # A tuple of day, month, year. We don't need the
-    # calibrated RA axis value, just the date it was calibrated.
-    # For each day beyond this (looping every 365 days) we add 4 minutes
-    # to the calibrated value.
-    DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(4, 1, 2022)
 
     # Markers
     # Values that prefix every stored value. These are used to indicate
@@ -816,7 +837,7 @@ class RA_FRAM:
             return self._ra_target
         # No cached value,
         # so write and then return the default
-        self.write_ra_target(RA_FRAM.DEFAULT_RA_TARGET)
+        self.write_ra_target(DEFAULT_RA_TARGET)
         return self._ra_target
     
     def write_ra_target(self, ra_target: RA) -> None:
@@ -847,7 +868,7 @@ class RA_FRAM:
             return self._calibration_date
         # No cached value,
         # so write and then return the default
-        self.write_calibration_date(RA_FRAM.DEFAULT_CALIBRATION_DATE)
+        self.write_calibration_date(DEFAULT_CALIBRATION_DATE)
         return self._calibration_date
     
     def write_calibration_date(self, calibration_date: CalibrationDate) -> None:
@@ -913,6 +934,12 @@ _RA_DISPLAY: LTP305_Pair =\
 
 
 def btn_1(pin: Pin) -> None:
+    """The '**DISPLAY** button. Pressing this when the display is off
+    will disply the current (real-time) RA axis compensataion value.
+    When the display is on it cycles between this and displaying the target RA,
+    The current time, the calibration day and month and the calibration year.
+    """
+
     # Crude debounce.
     # We disable theis pin's interrupt and
     # pause here for a debounce period. If the pin is still pressed
@@ -926,6 +953,17 @@ def btn_1(pin: Pin) -> None:
 
 
 def btn_2(pin: Pin) -> None:
+    """The **PROGRAM** button. Pressing this when the display is on allows
+    adjustments to the displayed value. The compensated RA value cannot
+    be adjusted. The taregt RA is calculated automatically from the current time
+    and calibration date. When pressed during the display of target RA, current
+    time or clibration values the values flash and the UP/DOWN buttons
+    can be used to alter the displayed value.
+
+    Pressing the program button again saves the value. Presssing MODE cancels
+    the change.
+    """
+
     pin.irq(handler=None)
     # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
@@ -935,6 +973,10 @@ def btn_2(pin: Pin) -> None:
 
 
 def btn_3(pin: Pin) -> None:
+    """The **DOWN** button. Pressing this when the display is on decreases
+    the display brightness.
+    """
+
     pin.irq(handler=None)
     # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
@@ -944,6 +986,10 @@ def btn_3(pin: Pin) -> None:
         
 
 def btn_4(pin: Pin) -> None:
+    """The **UP** button. Pressing this when the display is on increases
+    the display brightness.
+    """
+
     pin.irq(handler=None)
     # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
@@ -969,6 +1015,12 @@ class StateMachine:
     S_DISPLAY_TIME: int = 3
     S_DISPLAY_C_DATE: int = 4
     S_DISPLAY_C_YEAR: int = 5
+    S_PROGRAM_RA_H: int = 6
+    S_PROGRAM_RA_M: int = 7
+    S_PROGRAM_TIME: int = 8
+    S_PROGRAM_C_DAY: int = 9
+    S_PROGRAM_C_MONTH: int = 10
+    S_PROGRAM_C_YEAR: int = 11
     
     TIMER_PERIOD_MS: int = 500
     # Number of timer ticks to hold the display (8 is 4 seconds)
@@ -1000,12 +1052,22 @@ class StateMachine:
         # we just enable and disable it.
         self._timer: Optional[Timer] = None
         
+        # Program mode indication.
+        # When in program mode the display flashes.
+        # Whether the left, right or left and right displays flash
+        # will depend on the state we're in.
+        self._programming: bool = False
+        self._programming_left: bool = False
+        self._programming_right: bool = False
+        
     def process(self, command: int) -> bool:
         """Process a command, where the actions depend on the
         current 'state'.
         """
 
         if command == _CMD_TICK:
+            # Internal TICK (500mS)
+            
             if self._state in [StateMachine.S_IDLE]:
                 # Nothing to do
                 return True
@@ -1019,29 +1081,59 @@ class StateMachine:
                     return self._to_idle()
                 return True
 
+            # Otherwise nothing to do
+            return True
+
         if command == _CMD_BUTTON_1:
-            if self._state in [StateMachine.S_IDLE]:
+            # "DISPLAY" button
+
+            # If not in programming mode we switch to another item to display.
+            # Here we cancel programming mode if it's set
+            # and then enter the normal mode of the item beign displayed.
+
+            # Non-programming states
+            if self._state == StateMachine.S_IDLE:
                 return self._to_display_ra()
-            if self._state in [StateMachine.S_DISPLAY_RA]:
+            if self._state == StateMachine.S_DISPLAY_RA:
                 return self._to_display_ra_target()
-            if self._state in [StateMachine.S_DISPLAY_RA_TARGET]:
+            if self._state == StateMachine.S_DISPLAY_RA_TARGET:
                 return self._to_display_time()
-            if self._state in [StateMachine.S_DISPLAY_TIME]:
+            if self._state == StateMachine.S_DISPLAY_TIME:
                 return self._to_display_calibration_date()
-            if self._state in [StateMachine.S_DISPLAY_C_DATE]:
+            if self._state == StateMachine.S_DISPLAY_C_DATE:
                 return self._to_display_calibration_year()
-            if self._state in [StateMachine.S_DISPLAY_C_YEAR]:
+            if self._state == StateMachine.S_DISPLAY_C_YEAR:
                 return self._to_display_ra()
+
+            # Programming states
+            # TODO
 
             # Otherwise nothing to do
             return True
 
         if command == _CMD_BUTTON_2:
-            # No features yet
-            # so just return success
+            # "PROGRAM" button
+
+            # Into programming mode (from valid non-programming states)
+            if self._state == StateMachine.S_DISPLAY_RA_TARGET:
+                print('PROGRAM (ra target)')
+            if self._state == StateMachine.S_DISPLAY_TIME:
+                print('PROGRAM (clock)')
+            if self._state == StateMachine.S_DISPLAY_C_YEAR:
+                print('PROGRAM (calibration year)')
+            if self._state == StateMachine.S_DISPLAY_C_DATE:
+                print('PROGRAM (calibration month)')
+
+            # Out of programming mode (from programming states)
+            # Here we commit the change and return to normal mode.
+            # TODO
+                
+            # Otherwise nothing to do
             return True
 
         if command == _CMD_BUTTON_3:
+            # "DOWN" button
+
             if not self._state in [StateMachine.S_IDLE]:
                 # Decrease display brightness,
                 # and reset the timer.
@@ -1054,6 +1146,8 @@ class StateMachine:
             return True
 
         if command == _CMD_BUTTON_4:
+            # "UP" button
+
             if not self._state in [StateMachine.S_IDLE]:
                 # Increase display brightness,
                 # and reset the timer.
@@ -1164,6 +1258,9 @@ class StateMachine:
 
 if __name__ == '__main__':
 
+    # Switch on the on-board LED
+    ONBOARD_LED.value(1)
+    
     # Create the FRAM instance
     _FRAM: FRAM = FRAM(_I2C, _FRAM_ADDRESS)
     _RA_FRAM: RA_FRAM = RA_FRAM(_FRAM)
