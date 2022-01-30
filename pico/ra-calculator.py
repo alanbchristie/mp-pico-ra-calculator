@@ -1153,8 +1153,12 @@ class StateMachine:
                 # Switch programming off.
                 # Return to the state that was being programmed...
                 self._programming = False
+                if self._programming_state == StateMachine.S_DISPLAY_RA_TARGET:
+                    return self._to_display_ra_target()
                 if self._programming_state == StateMachine.S_DISPLAY_CLOCK:
                     return self._to_display_clock()
+                if self._programming_state == StateMachine.S_DISPLAY_C_DATE:
+                    return self._to_display_calibration_date()
                 if self._programming_state == StateMachine.S_DISPLAY_C_YEAR:
                     return self._to_display_calibration_year()
 
@@ -1166,13 +1170,25 @@ class StateMachine:
 
             # Into programming mode (from valid non-programming states)
             if self._state == StateMachine.S_DISPLAY_RA_TARGET:
-                print('PROGRAM (ra target) [TBD]')
+                return self._to_program_ra_target_h()             
             if self._state == StateMachine.S_DISPLAY_CLOCK:
                 return self._to_program_clock()             
             if self._state == StateMachine.S_DISPLAY_C_DATE:
-                print('PROGRAM (calibration month) [TBD]')
+                return self._to_program_calibration_day()             
             if self._state == StateMachine.S_DISPLAY_C_YEAR:
                 return self._to_program_calibration_year()             
+
+            # Move from left to right editing
+            # Applies when editing the RA Target or Calibration Date
+            if self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
+                return self._to_program_ra_target_m()             
+            if self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
+                return self._to_program_ra_target_h()             
+            
+            if self._state == StateMachine.S_PROGRAM_C_DAY:
+                return self._to_program_calibration_month()             
+            if self._state == StateMachine.S_PROGRAM_C_MONTH:
+                return self._to_program_calibration_day()             
 
             # Out of programming mode (from programming states)
             # Here we commit the change and return to normal mode.
@@ -1316,6 +1332,62 @@ class StateMachine:
 
         return True
 
+    def _to_program_ra_target_h(self) -> bool:
+        
+        print('_to_program_ra_target_h()')
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_RA_TARGET_H
+        
+        # Clear any countdown timer
+        # While programming there is no idle countdown.
+        self._to_idle_countdown = 0
+        # Set prigramming mode
+        self._programming = True
+        self._programming_left = True
+        self._programming_right = False
+        self._programming_left_on = True
+        self._programming_right_on = True
+        self._programming_state = StateMachine.S_DISPLAY_RA_TARGET
+
+        # Start the timer
+        # (used to flash the appropriate part of the display)
+        self._start_timer(to_idle=False)
+
+        # What is the value we're programming?
+        self._programming_value = '0000'
+        self._display.show(self._programming_value)
+        
+        return True
+
+    def _to_program_ra_target_m(self) -> bool:
+        
+        print('_to_program_ra_target_m()')
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_RA_TARGET_M
+        
+        # Clear any countdown timer
+        # While programming there is no idle countdown.
+        self._to_idle_countdown = 0
+        # Set prigramming mode
+        self._programming = True
+        self._programming_left = False
+        self._programming_right = True
+        self._programming_left_on = True
+        self._programming_right_on = True
+        self._programming_state = StateMachine.S_DISPLAY_RA_TARGET
+
+        # Start the timer
+        # (used to flash the appropriate part of the display)
+        self._start_timer(to_idle=False)
+
+        # What is the value we're programming?
+        self._programming_value = '0000'
+        self._display.show(self._programming_value)
+        
+        return True
+
     def _to_program_clock(self) -> bool:
         
         print('_to_program_clock()')
@@ -1339,9 +1411,65 @@ class StateMachine:
         self._start_timer(to_idle=False)
 
         # What is the value we're programming?
-        self._programming_value = '2222'
+        self._programming_value = '1111'
         self._display.show(self._programming_value)
         
+        return True
+
+    def _to_program_calibration_month(self) -> bool:
+        
+        print('_to_program_calibration_month()')
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_C_MONTH
+        
+        # Clear any countdown timer
+        # While programming there is no idle countdown.
+        self._to_idle_countdown = 0
+        # Set prigramming mode
+        self._programming = True
+        self._programming_left = False
+        self._programming_right = True
+        self._programming_left_on = True
+        self._programming_right_on = True
+        self._programming_state = StateMachine.S_DISPLAY_C_DATE
+
+        # Start the timer
+        # (used to flash the appropriate part of the display)
+        self._start_timer(to_idle=False)
+
+        # What is the value we're programming?
+        self._programming_value = '2222'
+        self._display.show(self._programming_value)
+
+        return True
+
+    def _to_program_calibration_day(self) -> bool:
+        
+        print('_to_program_calibration_day()')
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_C_DAY
+        
+        # Clear any countdown timer
+        # While programming there is no idle countdown.
+        self._to_idle_countdown = 0
+        # Set prigramming mode
+        self._programming = True
+        self._programming_left = True
+        self._programming_right = False
+        self._programming_left_on = True
+        self._programming_right_on = True
+        self._programming_state = StateMachine.S_DISPLAY_C_DATE
+
+        # Start the timer
+        # (used to flash the appropriate part of the display)
+        self._start_timer(to_idle=False)
+
+        # What is the value we're programming?
+        self._programming_value = '2222'
+        self._display.show(self._programming_value)
+
         return True
 
     def _to_program_calibration_year(self) -> bool:
