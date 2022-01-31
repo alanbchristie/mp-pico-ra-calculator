@@ -860,14 +860,14 @@ def btn_2(pin: Pin) -> None:
     # Less than 3 seconds we insert a _CMD_BUTTON_2 command,
     # for 3 seconds or more it's a _CMD_BUTTON_2_LONG command.
     if pin.value():
-        down_ms: int = time.ticks_ms()
+        down_ms: int = time.ticks_ms()  # type: ignore
         depressed: bool = True
         while depressed:
-            time.sleep_ms(_BUTTON_DEBOUNCE_MS)
+            time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
             if not pin.value():
                 depressed = False
-        up_ms: int = time.ticks_ms()
-        duration: int = time.ticks_diff(up_ms, down_ms)
+        up_ms: int = time.ticks_ms()  # type: ignore
+        duration: int = time.ticks_diff(up_ms, down_ms)  # type: ignore
         if duration >= _LONG_BUTTON_PRESS_MS:
             _COMMAND_QUEUE.put(_CMD_BUTTON_2_LONG)
         else:
@@ -999,6 +999,8 @@ class StateMachine:
         """Called when the 'UP' button has been pressed in program mode.
         Here we need to appropriately increment the _programming_value.
         """
+        assert self._programming_value
+
         if self._state == StateMachine.S_PROGRAM_C_YEAR:
             # Increment until a maximum year.
             new_year: int = int(self._programming_value)
@@ -1018,24 +1020,24 @@ class StateMachine:
             self._programming_value = f'{hour:02d}{minute:02d}'
         elif self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
             # Adjust the hours only
-            hour: int = int(self._programming_value[:2])
-            minute: int = int(self._programming_value[2:])
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
             hour += 1
             if hour > 23:
                 hour = 0
             self._programming_value = f'{hour:02d}{minute:02d}'
         elif self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
             # Adjust the minutes only
-            hour: int = int(self._programming_value[:2])
-            minute: int = int(self._programming_value[2:])
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
             minute += 1
             if minute > 59:
                 minute = 0
             self._programming_value = f'{hour:02d}{minute:02d}'
         elif self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
             # Adjust the minutes only
-            hour: int = int(self._programming_value[:2])
-            minute: int = int(self._programming_value[2:])
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
             minute += 1
             if minute > 59:
                 minute = 0
@@ -1050,8 +1052,8 @@ class StateMachine:
             self._programming_value = f'{day:2d}{month:2d}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
             # Adjust the day only
-            day: int = int(self._programming_value[:2])
-            month: int = int(self._programming_value[2:])
+            day = int(self._programming_value[:2])
+            month = int(self._programming_value[2:])
             day += 1
             if day > 31:
                 day = 1
@@ -1061,6 +1063,8 @@ class StateMachine:
         """Called when the 'DOWN' button has been pressed in program mode.
         Here we need to appropriately decrement the _programming_value.
         """
+        assert self._programming_value
+
         if self._state == StateMachine.S_PROGRAM_C_YEAR:
             # Decrement until minimum year
             new_year: int = int(self._programming_value)
@@ -1080,8 +1084,8 @@ class StateMachine:
             self._programming_value = f'{hour:02d}{minute:02d}'
         elif self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
             # Adjust the hours only
-            hour: int = int(self._programming_value[:2])
-            minute: int = int(self._programming_value[2:])
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
             hour -= 1
             if hour < 0:
                 hour = 23
@@ -1096,8 +1100,8 @@ class StateMachine:
             self._programming_value = f'{day:2d}{month:2d}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
             # Adjust the day only
-            day: int = int(self._programming_value[:2])
-            month: int = int(self._programming_value[2:])
+            day = int(self._programming_value[:2])
+            month = int(self._programming_value[2:])
             day -= 1
             if day < 1:
                 day = 31
@@ -1221,9 +1225,9 @@ class StateMachine:
             # The program button's been pressed for a long time.
             # This should be used to 'save' any programming value.
             
-            # Only act if we're in 'progarmming' mode.
+            # Only act if we're in 'programming' mode.
             if self._programming:
-                print('PROGRAM - SAVE')
+                assert self._programming_value
                 if self._state in[StateMachine.S_PROGRAM_RA_TARGET_H,
                                   StateMachine.S_PROGRAM_RA_TARGET_M]:
                     ra_h: int = int(self._programming_value[:2])
