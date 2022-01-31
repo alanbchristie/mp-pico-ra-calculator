@@ -4,7 +4,7 @@ To clear any stored values in the FRAM run _RA_FRAM.clear().
 """
 import time
 try:
-    from typing import Dict, List, Optional, Union
+    from typing import List, Optional, Tuple, Union
 except ImportError:
     pass
 
@@ -16,7 +16,7 @@ from ucollections import namedtuple # type: ignore
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
 
-# Do we light the onbaord LED when we start?
+# Do we light the onbaord LED when we start?
 _LIGHT_ONBOARD_LED: bool = False
 # The Pico on-board LED
 _ONBOARD_LED: Pin = Pin(25, Pin.OUT)
@@ -44,7 +44,7 @@ DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1, 2022)
 # Minutes in one day
 _DAY_MINUTES: int = 1_440
 
-# What consitutes a 'long' button press?
+# What constitutes a 'long' button press?
 # 3 seconds?
 _LONG_BUTTON_PRESS_MS: int = 3_000
 
@@ -61,7 +61,7 @@ _SDA: int = 16
 # A MicroPython i2c object (for special/unsupported devices)
 _I2C: I2C = I2C(id=0, scl=Pin(_SCL), sda=Pin(_SDA))
 
-# Find the LED displays (LTP305 devcies) on 0x61, 0x62 or 0x63.
+# Find the LED displays (LTP305 devcies) on 0x61, 0x62 or 0x63.
 # We must have two and the first becomes the left-hand pair of digits
 # (the hour) for the RA/Clock display.
 _RA_DISPLAY_H_ADDRESS: Optional[int] = None
@@ -109,7 +109,7 @@ assert _FRAM_ADDRESS
 _MIN_BRIGHTNESS: int = 1
 _MAX_BRIGHTNESS: int = 20
 
-# Control buttion pin designation
+# Control button pin designation
 # We don't need a 'Pin.PULL_UP'
 # because the buttons on the 'Pico Breadboard'
 # are pulled down.
