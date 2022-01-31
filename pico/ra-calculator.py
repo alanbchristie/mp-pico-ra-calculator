@@ -1,4 +1,4 @@
-"""The rea-time RA compensation calculator.
+"""The real-time RA compensation calculator.
 
 To clear any stored values in the FRAM run _RA_FRAM.clear().
 """
@@ -10,17 +10,16 @@ except ImportError:
 
 # pylint: disable=import-error
 import micropython  # type: ignore
-from machine import I2C, Pin, Timer  # type: ignore
+from machine import I2C, Pin, RTC,Timer  # type: ignore
 from ucollections import namedtuple # type: ignore
-
-from pimoroni_i2c import PimoroniI2C  # type: ignore
-from breakout_rtc import BreakoutRTC  # type: ignore
 
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
 
+# Do we light the onbaord LED when we start?
+_LIGHT_ONBOARD_LED: bool = False
 # The Pico on-board LED
-ONBOARD_LED: Pin = Pin(25, Pin.OUT)
+_ONBOARD_LED: Pin = Pin(25, Pin.OUT)
 
 # An RA value: hours and minutes.
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
@@ -43,7 +42,11 @@ DEFAULT_RA_TARGET: RA = RA(5, 16)
 DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1, 2022)
 
 # Minutes in one day
-_DAY_MINUTES: int = 1440
+_DAY_MINUTES: int = 1_440
+
+# What consitutes a 'long' button press?
+# 3 seconds?
+_LONG_BUTTON_PRESS_MS: int = 3_000
 
 # Min/Max years
 # Min is limited to smallest 4 digits (1000)
@@ -55,9 +58,6 @@ _MAX_YEAR: int = 9999
 _SCL: int = 17
 _SDA: int = 16
 
-# A Pimoroni i2c object (for supported devices)
-_PINS: Dict[str, int] = {'scl': _SCL, 'sda': _SDA}
-_PIMORONI_I2C: PimoroniI2C = PimoroniI2C(**_PINS)
 # A MicroPython i2c object (for special/unsupported devices)
 _I2C: I2C = I2C(id=0, scl=Pin(_SCL), sda=Pin(_SDA))
 
@@ -245,24 +245,9 @@ class LTP305:
     The displays can use i2c address 0x61-0x63.
     """
 
-    # LTP305 bitmaps for the basic 'ASCII' character set.
+    # LTP305 bitmaps for the SPACE and the digits.
     font = {
         32: [0x00, 0x00, 0x00, 0x00, 0x00],  # (space)
-        33: [0x00, 0x00, 0x5f, 0x00, 0x00],  # !
-        34: [0x00, 0x07, 0x00, 0x07, 0x00],  # "
-        35: [0x14, 0x7f, 0x14, 0x7f, 0x14],  # #
-        36: [0x24, 0x2a, 0x7f, 0x2a, 0x12],  # $
-        37: [0x23, 0x13, 0x08, 0x64, 0x62],  # %
-        38: [0x36, 0x49, 0x55, 0x22, 0x50],  # &
-        39: [0x00, 0x05, 0x03, 0x00, 0x00],  # '
-        40: [0x00, 0x1c, 0x22, 0x41, 0x00],  # (
-        41: [0x00, 0x41, 0x22, 0x1c, 0x00],  # )
-        42: [0x08, 0x2a, 0x1c, 0x2a, 0x08],  # *
-        43: [0x08, 0x08, 0x3e, 0x08, 0x08],  # +
-        44: [0x00, 0x50, 0x30, 0x00, 0x00],  # ,
-        45: [0x08, 0x08, 0x08, 0x08, 0x08],  # -
-        46: [0x00, 0x60, 0x60, 0x00, 0x00],  # .
-        47: [0x20, 0x10, 0x08, 0x04, 0x02],  # /
         #        48: [0x3e, 0x51, 0x49, 0x45, 0x3e],  # 0
         48: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
         49: [0x00, 0x42, 0x7f, 0x40, 0x00],  # 1
@@ -274,75 +259,6 @@ class LTP305:
         55: [0x01, 0x71, 0x09, 0x05, 0x03],  # 7
         56: [0x36, 0x49, 0x49, 0x49, 0x36],  # 8
         57: [0x06, 0x49, 0x49, 0x29, 0x1e],  # 9
-        58: [0x00, 0x36, 0x36, 0x00, 0x00],  # :
-        59: [0x00, 0x56, 0x36, 0x00, 0x00],  # ;
-        60: [0x00, 0x08, 0x14, 0x22, 0x41],  # <
-        61: [0x14, 0x14, 0x14, 0x14, 0x14],  # =
-        62: [0x41, 0x22, 0x14, 0x08, 0x00],  # >
-        63: [0x02, 0x01, 0x51, 0x09, 0x06],  # ?
-        64: [0x32, 0x49, 0x79, 0x41, 0x3e],  # @
-        65: [0x7e, 0x11, 0x11, 0x11, 0x7e],  # A
-        66: [0x7f, 0x49, 0x49, 0x49, 0x36],  # B
-        67: [0x3e, 0x41, 0x41, 0x41, 0x22],  # C
-        68: [0x7f, 0x41, 0x41, 0x22, 0x1c],  # D
-        69: [0x7f, 0x49, 0x49, 0x49, 0x41],  # E
-        70: [0x7f, 0x09, 0x09, 0x01, 0x01],  # F
-        71: [0x3e, 0x41, 0x41, 0x51, 0x32],  # G
-        72: [0x7f, 0x08, 0x08, 0x08, 0x7f],  # H
-        73: [0x00, 0x41, 0x7f, 0x41, 0x00],  # I
-        74: [0x20, 0x40, 0x41, 0x3f, 0x01],  # J
-        75: [0x7f, 0x08, 0x14, 0x22, 0x41],  # K
-        76: [0x7f, 0x40, 0x40, 0x40, 0x40],  # L
-        77: [0x7f, 0x02, 0x04, 0x02, 0x7f],  # M
-        78: [0x7f, 0x04, 0x08, 0x10, 0x7f],  # N
-        79: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
-        80: [0x7f, 0x09, 0x09, 0x09, 0x06],  # P
-        81: [0x3e, 0x41, 0x51, 0x21, 0x5e],  # Q
-        82: [0x7f, 0x09, 0x19, 0x29, 0x46],  # R
-        83: [0x46, 0x49, 0x49, 0x49, 0x31],  # S
-        84: [0x01, 0x01, 0x7f, 0x01, 0x01],  # T
-        85: [0x3f, 0x40, 0x40, 0x40, 0x3f],  # U
-        86: [0x1f, 0x20, 0x40, 0x20, 0x1f],  # V
-        87: [0x7f, 0x20, 0x18, 0x20, 0x7f],  # W
-        88: [0x63, 0x14, 0x08, 0x14, 0x63],  # X
-        89: [0x03, 0x04, 0x78, 0x04, 0x03],  # Y
-        90: [0x61, 0x51, 0x49, 0x45, 0x43],  # Z
-        91: [0x00, 0x00, 0x7f, 0x41, 0x41],  # [
-        92: [0x02, 0x04, 0x08, 0x10, 0x20],  # \
-        93: [0x41, 0x41, 0x7f, 0x00, 0x00],  # ]
-        94: [0x04, 0x02, 0x01, 0x02, 0x04],  # ^
-        95: [0x40, 0x40, 0x40, 0x40, 0x40],  # _
-        96: [0x00, 0x01, 0x02, 0x04, 0x00],  # `
-        97: [0x20, 0x54, 0x54, 0x54, 0x78],  # a
-        98: [0x7f, 0x48, 0x44, 0x44, 0x38],  # b
-        99: [0x38, 0x44, 0x44, 0x44, 0x20],  # c
-        100: [0x38, 0x44, 0x44, 0x48, 0x7f],  # d
-        101: [0x38, 0x54, 0x54, 0x54, 0x18],  # e
-        102: [0x08, 0x7e, 0x09, 0x01, 0x02],  # f
-        103: [0x08, 0x14, 0x54, 0x54, 0x3c],  # g
-        104: [0x7f, 0x08, 0x04, 0x04, 0x78],  # h
-        105: [0x00, 0x44, 0x7d, 0x40, 0x00],  # i
-        106: [0x20, 0x40, 0x44, 0x3d, 0x00],  # j
-        107: [0x00, 0x7f, 0x10, 0x28, 0x44],  # k
-        108: [0x00, 0x41, 0x7f, 0x40, 0x00],  # l
-        109: [0x7c, 0x04, 0x18, 0x04, 0x78],  # m
-        110: [0x7c, 0x08, 0x04, 0x04, 0x78],  # n
-        111: [0x38, 0x44, 0x44, 0x44, 0x38],  # o
-        112: [0x7c, 0x14, 0x14, 0x14, 0x08],  # p
-        113: [0x08, 0x14, 0x14, 0x18, 0x7c],  # q
-        114: [0x7c, 0x08, 0x04, 0x04, 0x08],  # r
-        115: [0x48, 0x54, 0x54, 0x54, 0x20],  # s
-        116: [0x04, 0x3f, 0x44, 0x40, 0x20],  # t
-        117: [0x3c, 0x40, 0x40, 0x20, 0x7c],  # u
-        118: [0x1c, 0x20, 0x40, 0x20, 0x1c],  # v
-        119: [0x3c, 0x40, 0x30, 0x40, 0x3c],  # w
-        120: [0x44, 0x28, 0x10, 0x28, 0x44],  # x
-        121: [0x0c, 0x50, 0x50, 0x50, 0x3c],  # y
-        122: [0x44, 0x64, 0x54, 0x4c, 0x44],  # z
-        123: [0x00, 0x08, 0x36, 0x41, 0x00],  # {
-        124: [0x00, 0x00, 0x7f, 0x00, 0x00],  # |
-        125: [0x00, 0x41, 0x36, 0x08, 0x00],  # }
-        126: [0x08, 0x08, 0x2a, 0x1c, 0x08],  # ~
     }
 
     MODE = 0b00011000
@@ -395,26 +311,6 @@ class LTP305:
             self._bus.writeto_mem(self._address,
                                   LTP305.CMD_BRIGHTNESS,
                                   self._brightness.to_bytes(1, 'big'))
-
-    def set_decimal(self,
-                    left: Optional[bool] = None,
-                    right: Optional[bool] = None) -> None:
-        """Set decimal of left and/or right matrix.
-
-        :param left: State of left decimal dot
-        :param right: State of right decimal dot
-
-        """
-        if left is not None:
-            if left:
-                self._buf_matrix_left[7] |= 0b01000000
-            else:
-                self._buf_matrix_left[7] &= 0b10111111
-        if right is not None:
-            if right:
-                self._buf_matrix_right[6] |= 0b10000000
-            else:
-                self._buf_matrix_right[6] &= 0b01111111
 
     def set_pixel(self, px: int, py: int, val: int) -> None:
         """Set a single pixel on the matrix.
@@ -488,7 +384,7 @@ class LTP305_Pair:
     
     def __init__(self,
                  i2c,
-                 rtc,
+                 rtc: RTC,
                  address_h: int,
                  address_m: int,
                  brightness: int = _MIN_BRIGHTNESS):
@@ -533,20 +429,12 @@ class LTP305_Pair:
         assert ra_target
         assert calibration_date
 
-        # Read the RTC until we get something
-        new_time: str = ''
-        new_date: str = ''
-        while not new_time and not new_date:
-            if self._rtc.update_time():
-                new_time = self._rtc.string_time()
-                new_date = self._rtc.string_date()
-            else:
-                # Sleep (less than a second)
-                time.sleep(0.5)
-        
-        # The time is given to us as 'HH:MM:SS',
-        # we just need HH:MM, which we'll call 'clock'.
-        clock: str = new_time[:5]
+        # Read the RTC
+        # We're given an 8-value tuple with the following content:
+        # (year, month, day, weekday, hours, minutes, seconds, subseconds)
+        rtc = self._rtc.datetime()      
+        # We just need 'HH:MM', which we'll call 'clock'.
+        clock: str = f'{rtc[4]:02d}:{rtc[5]:02d}'
 
         # Calculate the corrected RA.
         #
@@ -566,9 +454,9 @@ class LTP305_Pair:
         # (essentially that's what the extra day in the leap-year is all about).
         # The maximum correction is 364 days. After each year we're back to
         # a daily offset of '0'.
-        date_day: int = int(new_date[:2])
-        date_month: int = int(new_date[3:5])
-        date_year: int = int(new_date[6:])
+        date_day: int = rtc[2]
+        date_month: int = rtc[1]
+        date_year: int = rtc[0]
         elapsed_days: int = days_between_dates(calibration_date.y,
                                                calibration_date.m,
                                                calibration_date.d,
@@ -609,10 +497,9 @@ class LTP305_Pair:
         """
 
         if not hour or not minute:
-            new_time: str = self.get_time()
-            # The time is given to us as 'HH:MM:SS',
-            # we just need HHMM, which we'll call 'clock'.
-            clock: str = new_time[:2] + new_time[3:5]
+            rtc_time: Tuple = self._rtc.datetime()
+            # We just need HHMM, which we'll call 'clock'.
+            clock: str = f'{rtc_time[4]:02d}{rtc_time[5]:02d}'
         else:
             # User-provided value
             clock = f'{hour:02d}{minute:02d}'
@@ -621,20 +508,6 @@ class LTP305_Pair:
         assert len(clock) == 4
         self.show(clock)
 
-    def get_time(self) -> str:
-        """Returns the time as clock 'HH:MM:SS'.
-        """
-        # Read the RTC until we get something
-        new_time: str = ''
-        while not new_time:
-            if self._rtc.update_time():
-                new_time = self._rtc.string_time()
-            else:
-                # Sleep (less than a second)
-                time.sleep(0.5)
-        # The time is given to us as 'HH:MM:SS'
-        return new_time
-        
     def show_ra_target(self, ra_target) -> None:
         """Displays the raw RA target value.
         """
@@ -907,14 +780,19 @@ class RA_FRAM:
 
 # The command queue - the object between the
 # buttons, timers and the main-loop state machine.
+# For now we only handle one command at a time,
+# i.e. queue size is 1.
 class CommandQueue:
 
     def __init__(self):
-        self._queue_size: int = 100
+        self._queue_size: int = 1
         self._queue = []
     
     def members(self) -> int:
         return len(self._queue)
+
+    def clear(self) -> None:
+        self._queue.clear()
 
     def put(self, command: int) -> None:
         if len(self._queue) < self._queue_size:
@@ -929,13 +807,14 @@ class CommandQueue:
 # CommandQueue commands (just unique integers)
 _CMD_BUTTON_1: int = 1  # Button 1 has been pressed
 _CMD_BUTTON_2: int = 2  # Button 2 has been pressed
+_CMD_BUTTON_2_LONG: int = 22 # Button 2 has been pressed for a long time
 _CMD_BUTTON_3: int = 3  # Button 3 has been pressed
 _CMD_BUTTON_4: int = 4  # Button 4 has been pressed
 _CMD_TICK: int = 10     # The timer has fired
-    
-# Create a real-time clock object
-# (using the Pimoroni library)
-_RTC: BreakoutRTC = BreakoutRTC(_PIMORONI_I2C)
+
+# Use the RTC from MicroPython.
+# Connected to our RTC module by the Pimoronit custom image.
+_RTC: RTC = RTC()
 
 # Create the RA display object
 # (using the built-in MicroPython library)
@@ -981,12 +860,18 @@ def btn_2(pin: Pin) -> None:
     # Less than 3 seconds we insert a _CMD_BUTTON_2 command,
     # for 3 seconds or more it's a _CMD_BUTTON_2_LONG command.
     if pin.value():
+        down_ms: int = time.ticks_ms()
         depressed: bool = True
         while depressed:
             time.sleep_ms(_BUTTON_DEBOUNCE_MS)
             if not pin.value():
                 depressed = False
-        _COMMAND_QUEUE.put(_CMD_BUTTON_2)
+        up_ms: int = time.ticks_ms()
+        duration: int = time.ticks_diff(up_ms, down_ms)
+        if duration >= _LONG_BUTTON_PRESS_MS:
+            _COMMAND_QUEUE.put(_CMD_BUTTON_2_LONG)
+        else:
+            _COMMAND_QUEUE.put(_CMD_BUTTON_2)
     pin.irq(trigger=Pin.IRQ_RISING, handler=btn_2)
 
 
@@ -1017,8 +902,8 @@ def btn_4(pin: Pin) -> None:
 
 
 def tick(timer):
-    """A timer callback, called once per second.
-    Simply inserts a tick into the command queue.
+    """A timer callback.
+    Simply inserts _CMD_TICK into the command queue.
     """
     assert timer
 
@@ -1045,9 +930,10 @@ class StateMachine:
     # (8 is 4 seconds when the timer is 500mS)
     HOLD_TICKS: int = 8
     
-    def __init__(self, display: LTP305_Pair, ra_fram: RA_FRAM):
+    def __init__(self, display: LTP305_Pair, ra_fram: RA_FRAM, rtc: RTC):
         assert display
         assert ra_fram
+        assert rtc
         
         # The current state
         self._state: int = StateMachine.S_IDLE
@@ -1058,6 +944,7 @@ class StateMachine:
         # The RA display and FRAM
         self._display: LTP305_Pair = display
         self._ra_fram: RA_FRAM = ra_fram
+        self._rtc: RTC = rtc
         # Brightness
         self._brightness: int = self._ra_fram.read_brightness()
         self._ra_target: RA = self._ra_fram.read_ra_target()
@@ -1101,7 +988,7 @@ class StateMachine:
             self._timer = Timer(period=StateMachine.TIMER_PERIOD_MS, callback=tick)
         if to_idle:
             self._to_idle_countdown = StateMachine.HOLD_TICKS
-            
+                    
     def _stop_timer(self) -> None:
         if self._timer:
             self._timer.deinit()
@@ -1330,6 +1217,26 @@ class StateMachine:
             # Otherwise nothing to do
             return True
 
+        if command == _CMD_BUTTON_2_LONG:
+            # The program button's been pressed for a long time.
+            # This should be used to 'save' any programming value.
+            
+            # Only act if we're in 'progarmming' mode.
+            if self._programming:
+                print('PROGRAM - SAVE')
+                if self._state in[StateMachine.S_PROGRAM_RA_TARGET_H,
+                                  StateMachine.S_PROGRAM_RA_TARGET_M]:
+                    ra_h: int = int(self._programming_value[:2])
+                    ra_m: int = int(self._programming_value[2:])
+                    self._ra_target = RA(ra_h, ra_m)
+                    self._ra_fram.write_ra_target(self._ra_target)
+                    # With the RA target changed, the best state to
+                    # return to is to display the new corrected RA
+                    return self._to_display_ra()           
+                
+            # Nothing to do yet
+            return True
+
         if command == _CMD_BUTTON_3:
             # "DOWN" button
 
@@ -1537,10 +1444,9 @@ class StateMachine:
         self._start_timer(to_idle=False)
 
         # What is the value we're programming?
-        rtc_time: str = self._display.get_time()
-        # The time is given to us as 'HH:MM:SS',
-        # we just need HHMM...
-        self._programming_value = rtc_time[:2] + rtc_time[3:5]
+        rtc_time: Tuple = self._rtc.datetime()      
+        # We just need HHMM...
+        self._programming_value = f'{rtc_time[4]:02d}{rtc_time[5]:02d}'
         self._display.show(self._programming_value)
         
         return True
@@ -1621,14 +1527,15 @@ class StateMachine:
 
 if __name__ == '__main__':
 
-    # Switch on the on-board LED
-    ONBOARD_LED.value(1)
+    if _LIGHT_ONBOARD_LED:
+        # Switch on the on-board LED
+        _ONBOARD_LED.value(1)
     
     # Create the FRAM instance
     _FRAM: FRAM = FRAM(_I2C, _FRAM_ADDRESS)
     _RA_FRAM: RA_FRAM = RA_FRAM(_FRAM)
     # Create the StateMachine instance
-    _STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM)
+    _STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM, _RTC)
     # Command 'queue'
     _COMMAND_QUEUE: CommandQueue = CommandQueue()
     # Inject an automatic 'button-1' command into the command-queue
