@@ -110,6 +110,9 @@ _MIN_BRIGHTNESS: int = 1
 _MAX_BRIGHTNESS: int = 20
 
 # Control buttion pin designation
+# We don't need a 'Pin.PULL_UP'
+# because the buttons on the 'Pico Breadboard'
+# are pulled down.
 _BUTTON_1: Pin = Pin(11, Pin.IN)
 _BUTTON_2: Pin = Pin(12, Pin.IN)
 _BUTTON_3: Pin = Pin(13, Pin.IN)
@@ -1638,6 +1641,15 @@ if __name__ == '__main__':
     _BUTTON_2.irq(trigger=Pin.IRQ_FALLING, handler=btn_2)
     _BUTTON_3.irq(trigger=Pin.IRQ_FALLING, handler=btn_3)
     _BUTTON_4.irq(trigger=Pin.IRQ_FALLING, handler=btn_4)
+    # Immediatly call button funtions manually.
+    # For some reason I need to do this otherwise the
+    # first time the button is pressed the handler is invoked
+    # on the rising edge and not the falling edge!
+    # Consequently the first button press is lost.
+    btn_1(_BUTTON_1)
+    btn_2(_BUTTON_2)
+    btn_3(_BUTTON_3)
+    btn_4(_BUTTON_4)
 
     # Main loop
     while True:
