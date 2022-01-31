@@ -927,11 +927,11 @@ class CommandQueue:
 
 
 # CommandQueue commands (just unique integers)
-_CMD_TICK: int = 1      # The 1-second ticker has fired
-_CMD_BUTTON_1: int = 2  # Button 1 has been pressed
-_CMD_BUTTON_2: int = 3  # Button 2 has been pressed
-_CMD_BUTTON_3: int = 4  # Button 3 has been pressed
-_CMD_BUTTON_4: int = 5  # Button 4 has been pressed
+_CMD_BUTTON_1: int = 1  # Button 1 has been pressed
+_CMD_BUTTON_2: int = 2  # Button 2 has been pressed
+_CMD_BUTTON_3: int = 3  # Button 3 has been pressed
+_CMD_BUTTON_4: int = 4  # Button 4 has been pressed
+_CMD_TICK: int = 10     # The timer has fired
     
 # Create a real-time clock object
 # (using the Pimoroni library)
@@ -959,7 +959,7 @@ def btn_1(pin: Pin) -> None:
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
         _COMMAND_QUEUE.put(_CMD_BUTTON_1)
-    pin.irq(handler=btn_1)
+    pin.irq(trigger=Pin.IRQ_RISING, handler=btn_1)
 
 
 def btn_2(pin: Pin) -> None:
@@ -987,7 +987,7 @@ def btn_2(pin: Pin) -> None:
             if not pin.value():
                 depressed = False
         _COMMAND_QUEUE.put(_CMD_BUTTON_2)
-    pin.irq(handler=btn_2)
+    pin.irq(trigger=Pin.IRQ_RISING, handler=btn_2)
 
 
 def btn_3(pin: Pin) -> None:
@@ -1000,7 +1000,7 @@ def btn_3(pin: Pin) -> None:
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
         _COMMAND_QUEUE.put(_CMD_BUTTON_3)
-    pin.irq(handler=btn_3)
+    pin.irq(trigger=Pin.IRQ_RISING, handler=btn_3)
         
 
 def btn_4(pin: Pin) -> None:
@@ -1013,7 +1013,7 @@ def btn_4(pin: Pin) -> None:
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
         _COMMAND_QUEUE.put(_CMD_BUTTON_4)
-    pin.irq(handler=btn_4)
+    pin.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
 
 def tick(timer):
@@ -1637,19 +1637,10 @@ if __name__ == '__main__':
     _COMMAND_QUEUE.put(_CMD_BUTTON_1)
 
     # Attach button clicks to callbacks
-    _BUTTON_1.irq(trigger=Pin.IRQ_FALLING, handler=btn_1)
-    _BUTTON_2.irq(trigger=Pin.IRQ_FALLING, handler=btn_2)
-    _BUTTON_3.irq(trigger=Pin.IRQ_FALLING, handler=btn_3)
-    _BUTTON_4.irq(trigger=Pin.IRQ_FALLING, handler=btn_4)
-    # Immediatly call button funtions manually.
-    # For some reason I need to do this otherwise the
-    # first time the button is pressed the handler is invoked
-    # on the rising edge and not the falling edge!
-    # Consequently the first button press is lost.
-    btn_1(_BUTTON_1)
-    btn_2(_BUTTON_2)
-    btn_3(_BUTTON_3)
-    btn_4(_BUTTON_4)
+    _BUTTON_1.irq(trigger=Pin.IRQ_RISING, handler=btn_1)
+    _BUTTON_2.irq(trigger=Pin.IRQ_RISING, handler=btn_2)
+    _BUTTON_3.irq(trigger=Pin.IRQ_RISING, handler=btn_3)
+    _BUTTON_4.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
     # Main loop
     while True:
