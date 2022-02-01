@@ -4,7 +4,7 @@ To clear any stored values in the FRAM run _RA_FRAM.clear().
 """
 import time
 try:
-    from typing import List, Optional, Tuple, Union
+    from typing import Dict, List, Optional, Tuple, Union
 except ImportError:
     pass
 
@@ -23,32 +23,26 @@ _ONBOARD_LED: Pin = Pin(25, Pin.OUT)
 
 # An RA value: hours and minutes.
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
-# A Calibration Date: day, month, year
-CalibrationDate: namedtuple = namedtuple('CalibrationDate', ('d', 'm', 'y'))
+# A Calibration Date: day, month
+CalibrationDate: namedtuple = namedtuple('CalibrationDate', ('d', 'm'))
 
 # The target RA (Capella, the brightest star in the constellation of Auriga).
 # This is the Right Ascension of the default target object.
 DEFAULT_RA_TARGET: RA = RA(5, 16)
 
 # The date the telescope's RA axis was calibrated.
-# A tuple of day, month, year. We don't need the
+# A tuple of day, month. We don't need the
 # calibrated RA axis value, just the date it was calibrated.
 # For each day beyond this (looping every 365 days) we add 4 minutes
 # to the calibrated value.
-DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1, 2022)
+DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1)
 
 # Minutes in one day
 _DAY_MINUTES: int = 1_440
 
 # What constitutes a 'long' button press?
-# 3 seconds?
-_LONG_BUTTON_PRESS_MS: int = 3_000
-
-# Min/Max years
-# Min is limited to smallest 4 digits (1000)
-# Max must be limited largest 4 digits (9999)
-_MIN_YEAR: int = 2022
-_MAX_YEAR: int = 9999
+# 2 seconds?
+_LONG_BUTTON_PRESS_MS: int = 2_000
 
 # Configured I2C Pins
 _I2C_ID: int = 0
@@ -120,6 +114,20 @@ _BUTTON_4: Pin = Pin(14, Pin.IN)
 # A simple form of debounce.
 _BUTTON_DEBOUNCE_MS: int = 50
 
+# A list of 2-letter month names
+# Get name with simple lookup _MONTH_NAME[month_no]
+# Get numerical value from string with _MONTH_NAME.index(month_str)
+_MONTH_NAME: List[str] = ['xx',  # Invalid (index = 0)
+                          'Ja', 'Fe', 'Mc', 'Ap', 'Ma', 'Jn',
+                          'Ju', 'Au', 'Se', 'Oc', 'No', 'De']
+# Must have 13 entries
+# and every value must contain 2 letters
+assert len(_MONTH_NAME) == 13
+for month_name in _MONTH_NAME:
+    assert len(month_name) == 2
+    assert month_name[0].isalpha()
+    assert month_name[1].isalpha()
+
 
 def leap_year(year: int) -> bool:
     """Returns True of the given year is a leap year.
@@ -131,7 +139,7 @@ def days_between_dates(year1: int, month1: int, day1: int,
                        year2: int, month2: int, day2: int) -> int:
     """Returns the number of days between the given dates where,
     in our usage, the earlier data (the calibration date) is passed in
-    using the "1" values and the current date usign the "2" values.
+    using the "1" values and the current date using the "2" values.
     """
     # Cumulative Days by month
     cmtive_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
@@ -236,9 +244,11 @@ class LTP305:
     The displays can use i2c address 0x61-0x63.
     """
 
-    # LTP305 bitmaps for the SPACE and the digits.
-    font = {
+    # LTP305 bitmaps for key characters indexed by character ordinal.
+    # Digits, space and upper and lower-case letters.
+    font: Dict[int, List[int]] = {
         32: [0x00, 0x00, 0x00, 0x00, 0x00],  # (space)
+
         #        48: [0x3e, 0x51, 0x49, 0x45, 0x3e],  # 0
         48: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
         49: [0x00, 0x42, 0x7f, 0x40, 0x00],  # 1
@@ -250,6 +260,60 @@ class LTP305:
         55: [0x01, 0x71, 0x09, 0x05, 0x03],  # 7
         56: [0x36, 0x49, 0x49, 0x49, 0x36],  # 8
         57: [0x06, 0x49, 0x49, 0x29, 0x1e],  # 9
+
+        65: [0x7e, 0x11, 0x11, 0x11, 0x7e],  # A
+        66: [0x7f, 0x49, 0x49, 0x49, 0x36],  # B
+        67: [0x3e, 0x41, 0x41, 0x41, 0x22],  # C
+        68: [0x7f, 0x41, 0x41, 0x22, 0x1c],  # D
+        69: [0x7f, 0x49, 0x49, 0x49, 0x41],  # E
+        70: [0x7f, 0x09, 0x09, 0x01, 0x01],  # F
+        71: [0x3e, 0x41, 0x41, 0x51, 0x32],  # G
+        72: [0x7f, 0x08, 0x08, 0x08, 0x7f],  # H
+        73: [0x00, 0x41, 0x7f, 0x41, 0x00],  # I
+        74: [0x20, 0x40, 0x41, 0x3f, 0x01],  # J
+        75: [0x7f, 0x08, 0x14, 0x22, 0x41],  # K
+        76: [0x7f, 0x40, 0x40, 0x40, 0x40],  # L
+        77: [0x7f, 0x02, 0x04, 0x02, 0x7f],  # M
+        78: [0x7f, 0x04, 0x08, 0x10, 0x7f],  # N
+        79: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
+        80: [0x7f, 0x09, 0x09, 0x09, 0x06],  # P
+        81: [0x3e, 0x41, 0x51, 0x21, 0x5e],  # Q
+        82: [0x7f, 0x09, 0x19, 0x29, 0x46],  # R
+        83: [0x46, 0x49, 0x49, 0x49, 0x31],  # S
+        84: [0x01, 0x01, 0x7f, 0x01, 0x01],  # T
+        85: [0x3f, 0x40, 0x40, 0x40, 0x3f],  # U
+        86: [0x1f, 0x20, 0x40, 0x20, 0x1f],  # V
+        87: [0x7f, 0x20, 0x18, 0x20, 0x7f],  # W
+        88: [0x63, 0x14, 0x08, 0x14, 0x63],  # X
+        89: [0x03, 0x04, 0x78, 0x04, 0x03],  # Y
+        90: [0x61, 0x51, 0x49, 0x45, 0x43],  # Z
+
+        97: [0x20, 0x54, 0x54, 0x54, 0x78],  # a
+        98: [0x7f, 0x48, 0x44, 0x44, 0x38],  # b
+        99: [0x38, 0x44, 0x44, 0x44, 0x20],  # c
+        100: [0x38, 0x44, 0x44, 0x48, 0x7f],  # d
+        101: [0x38, 0x54, 0x54, 0x54, 0x18],  # e
+        102: [0x08, 0x7e, 0x09, 0x01, 0x02],  # f
+        103: [0x08, 0x14, 0x54, 0x54, 0x3c],  # g
+        104: [0x7f, 0x08, 0x04, 0x04, 0x78],  # h
+        105: [0x00, 0x44, 0x7d, 0x40, 0x00],  # i
+        106: [0x20, 0x40, 0x44, 0x3d, 0x00],  # j
+        107: [0x00, 0x7f, 0x10, 0x28, 0x44],  # k
+        108: [0x00, 0x41, 0x7f, 0x40, 0x00],  # l
+        109: [0x7c, 0x04, 0x18, 0x04, 0x78],  # m
+        110: [0x7c, 0x08, 0x04, 0x04, 0x78],  # n
+        111: [0x38, 0x44, 0x44, 0x44, 0x38],  # o
+        112: [0x7c, 0x14, 0x14, 0x14, 0x08],  # p
+        113: [0x08, 0x14, 0x14, 0x18, 0x7c],  # q
+        114: [0x7c, 0x08, 0x04, 0x04, 0x08],  # r
+        115: [0x48, 0x54, 0x54, 0x54, 0x20],  # s
+        116: [0x04, 0x3f, 0x44, 0x40, 0x20],  # t
+        117: [0x3c, 0x40, 0x40, 0x20, 0x7c],  # u
+        118: [0x1c, 0x20, 0x40, 0x20, 0x1c],  # v
+        119: [0x3c, 0x40, 0x30, 0x40, 0x3c],  # w
+        120: [0x44, 0x28, 0x10, 0x28, 0x44],  # x
+        121: [0x0c, 0x50, 0x50, 0x50, 0x3c],  # y
+        122: [0x44, 0x64, 0x54, 0x4c, 0x44],  # z
     }
 
     MODE = 0b00011000
@@ -360,8 +424,7 @@ class LTP305:
 class LTP305_Pair:
     """A wrapper around two LTP305 objects to form a Right-Ascension display.
     Basically a clock, but given "[HH][mm]". The pair can also be used
-    to display the target RA, the current time, the calibration date, and
-    year.
+    to display the target RA, the current time, and the calibration date.
     """
     
     def __init__(self,
@@ -438,14 +501,14 @@ class LTP305_Pair:
         date_day: int = rtc[2]
         date_month: int = rtc[1]
         date_year: int = rtc[0]
-        elapsed_days: int = days_between_dates(calibration_date.y,
+        elapsed_days: int = days_between_dates(2022,
                                                calibration_date.m,
                                                calibration_date.d,
                                                date_year,
                                                date_month,
                                                date_day)
         assert elapsed_days >= 0
-        # If caliration was on the 4th and today is the 5th the days between
+        # If calibration was on the 4th and today is the 5th the days between
         # the dates is '1' but, the first 24 hours is handled by the
         # 'sub_day_offset' so we must only count whole days, i.e. we subtract
         # '1' from the result to accommodate the
@@ -500,25 +563,14 @@ class LTP305_Pair:
 
     def show_calibration_date(self, calibration_date) -> None:
         """Displays the current calibration_date (day and month).
+        The month is rendered as a two-letter abbreviation to avoid
+        confusion with the target RA.
         """
-        clock: str = f'{calibration_date.d}'
-        if calibration_date.d < 10:
-            # Pad with space
-            clock = ' ' + clock
-        if calibration_date.m < 10:
-            clock += f' {calibration_date.m}'
-        else:
-            clock += f'{calibration_date.m}'
+        # The left-hand value (numerical day)
+        clock: str = f'{calibration_date.d:2d}'
+        # The right-hand value (abbreviated month)
+        clock += _MONTH_NAME[calibration_date.m]
 
-        # Display
-        self.show(clock)
-
-    def show_calibration_year(self, calibration_date) -> None:
-        """Displays the current calibration_year.
-        """
-        # The time is given to us as 'HH:MM:SS',
-        # we just need HH:MM, which we'll call 'clock'.
-        clock: str = f'{calibration_date.y:04d}'
         # Display
         self.show(clock)
 
@@ -541,7 +593,7 @@ class LTP305_Pair:
 
 
 class RA_FRAM:
-    """A RA wrapper around a FRAM class. This class provides
+    """A RA wrapper around a FRAM class. This class provides convenient
     RA-specific storage using the underlying FRAM. Here we provide
     methods to simplify the storage and retrieval of 'brightness',
     'RA target' and 'calibration date', all persisted safely in a FRAM
@@ -727,8 +779,7 @@ class RA_FRAM:
         # If so, read it, put it in the cache and return it.
         if self._is_value_valid(RA_FRAM._OFFSET_CALIBRATION_DATE):
             value: List[int] = self._read_values(RA_FRAM._OFFSET_CALIBRATION_DATE, 4)
-            year: int = value[2] * 100 + value[3]
-            self._calibration_date = CalibrationDate(value[0], value[1], year)
+            self._calibration_date = CalibrationDate(value[0], value[1])
             return self._calibration_date
         # No cached value,
         # so write and then return the default
@@ -742,7 +793,7 @@ class RA_FRAM:
 
         # Write to FRAN
         century: int = calibration_date.y // 100
-        year: int = calibration_date.y % 100
+        year: int = 2022
         values: List[int] = [calibration_date.d, calibration_date.m, century, year]
         self._write_value(RA_FRAM._OFFSET_CALIBRATION_DATE, values)
         
@@ -804,10 +855,12 @@ _RA_DISPLAY: LTP305_Pair =\
 
 
 def btn_1(pin: Pin) -> None:
-    """The '**DISPLAY** button. Pressing this when the display is off
+    """The '**DISPLAY** button. Creates the _CMD_BUTTON_1 command.
+
+    Pressing this when the display is off
     will display the current (real-time) RA axis compensation value.
-    When the display is on it cycles between this and displaying the target RA,
-    The current time, the calibration day and month and the calibration year.
+    Pressing it when the display is on cycles between other values
+    (like the RA target, current time and calibration date).
     """
 
     # Crude debounce.
@@ -823,15 +876,16 @@ def btn_1(pin: Pin) -> None:
 
 
 def btn_2(pin: Pin) -> None:
-    """The **PROGRAM** button. Pressing this when the display is on allows
-    adjustments to the displayed value. The compensated RA value cannot
-    be adjusted. The target RA is calculated automatically from the current time
-    and calibration date. When pressed during the display of target RA, current
-    time or calibration values the values flash and the UP/DOWN buttons
-    can be used to alter the displayed value.
+    """The **PROGRAM** button. Creates the _CMD_BUTTON_2 and _CMD_BUTTON_2_LONG
+    commands.
 
-    Pressing the program button for at least 3 seconds saves the value.
-    Pressing MODE cancels the change.
+    Pressing this on a programmable value is displayed (like the target RA)
+    enters the programming mode for the displayed value. IN programming mode
+    thr UP/DOWN buttons are used to alter the displayed value.
+
+    The programming value is committed by holding this button for a few seconds
+    (_LONG_BUTTON_PRESS_MS). Programing mode is cancelled by hitting the
+    **DISPLAY** button.
     """
 
     pin.irq(handler=None)
@@ -857,8 +911,11 @@ def btn_2(pin: Pin) -> None:
 
 
 def btn_3(pin: Pin) -> None:
-    """The **DOWN** button. Pressing this when the display is on decreases
-    the display brightness.
+    """The **DOWN** button. Creates the _CMD_BUTTON_3 command.
+
+    Pressing this when the display is on decreases
+    the display brightness. In programming mode it decreases the value that
+    is flashing.
     """
 
     pin.irq(handler=None)
@@ -870,8 +927,11 @@ def btn_3(pin: Pin) -> None:
         
 
 def btn_4(pin: Pin) -> None:
-    """The **UP** button. Pressing this when the display is on increases
-    the display brightness.
+    """The **UP** button. Creates the _CMD_BUTTON_4 command.
+
+    Pressing this when the display is on increases
+    the display brightness. In programming mode it increases the value that
+    is flashing.
     """
 
     pin.irq(handler=None)
@@ -883,8 +943,9 @@ def btn_4(pin: Pin) -> None:
 
 
 def tick(timer):
-    """A timer callback.
-    Simply inserts _CMD_TICK into the command queue.
+    """A timer callback. Creates the _CMD_TICK command.
+
+    Enabled only when display is on.
     """
     assert timer
 
@@ -898,14 +959,12 @@ class StateMachine:
     S_DISPLAY_RA_TARGET: int = 2
     S_DISPLAY_CLOCK: int = 3
     S_DISPLAY_C_DATE: int = 4
-    S_DISPLAY_C_YEAR: int = 5
-    S_PROGRAM_RA_TARGET_H: int = 6
-    S_PROGRAM_RA_TARGET_M: int = 7
-    S_PROGRAM_CLOCK: int = 8
-    S_PROGRAM_C_DAY: int = 9
-    S_PROGRAM_C_MONTH: int = 10
-    S_PROGRAM_C_YEAR: int = 11
-    
+    S_PROGRAM_RA_TARGET_H: int = 5
+    S_PROGRAM_RA_TARGET_M: int = 6
+    S_PROGRAM_CLOCK: int = 7
+    S_PROGRAM_C_DAY: int = 8
+    S_PROGRAM_C_MONTH: int = 9
+
     TIMER_PERIOD_MS: int = 500
     # Number of timer ticks to hold the display before returning to idle
     # (8 is 4 seconds when the timer is 500mS)
@@ -982,13 +1041,7 @@ class StateMachine:
         """
         assert self._programming_value
 
-        if self._state == StateMachine.S_PROGRAM_C_YEAR:
-            # Increment until a maximum year.
-            new_year: int = int(self._programming_value)
-            if new_year < _MAX_YEAR:
-                new_year += 1
-            self._programming_value = f'{new_year}'
-        elif self._state == StateMachine.S_PROGRAM_CLOCK:
+        if self._state == StateMachine.S_PROGRAM_CLOCK:
             # Run the clock backwards
             hour: int = int(self._programming_value[:2])
             minute: int = int(self._programming_value[2:])
@@ -1026,11 +1079,13 @@ class StateMachine:
         elif self._state == StateMachine.S_PROGRAM_C_MONTH:
             # Adjust the month only
             day: int = int(self._programming_value[:2])
-            month: int = int(self._programming_value[2:])
+            month: int = _MONTH_NAME.index(self._programming_value[2:])
+            assert month >= 1
             month += 1
             if month > 12:
                 month = 1
-            self._programming_value = f'{day:2d}{month:2d}'
+            new_month: str = _MONTH_NAME[month]
+            self._programming_value = f'{day:2d}{new_month}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
             # Adjust the day only
             day = int(self._programming_value[:2])
@@ -1046,13 +1101,7 @@ class StateMachine:
         """
         assert self._programming_value
 
-        if self._state == StateMachine.S_PROGRAM_C_YEAR:
-            # Decrement until minimum year
-            new_year: int = int(self._programming_value)
-            if new_year > _MIN_YEAR:
-                new_year -= 1
-            self._programming_value = f'{new_year}'
-        elif self._state == StateMachine.S_PROGRAM_CLOCK:
+        if self._state == StateMachine.S_PROGRAM_CLOCK:
             # Run the clock backwards
             hour: int = int(self._programming_value[:2])
             minute: int = int(self._programming_value[2:])
@@ -1074,11 +1123,13 @@ class StateMachine:
         elif self._state == StateMachine.S_PROGRAM_C_MONTH:
             # Adjust the month only
             day: int = int(self._programming_value[:2])
-            month: int = int(self._programming_value[2:])
+            month: int = _MONTH_NAME.index(self._programming_value[2:])
+            assert month >= 1
             month -= 1
             if month < 1:
                 month = 12
-            self._programming_value = f'{day:2d}{month:2d}'
+            new_month: str = _MONTH_NAME[month]
+            self._programming_value = f'{day:2d}{new_month}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
             # Adjust the day only
             day = int(self._programming_value[:2])
@@ -1129,7 +1180,7 @@ class StateMachine:
                     else:
                         self._programming_right_on = True
 
-            # Otherwise nothing to do
+            # Handled if we get here
             return True
 
         if command == _CMD_BUTTON_1:
@@ -1149,8 +1200,6 @@ class StateMachine:
             if self._state == StateMachine.S_DISPLAY_CLOCK:
                 return self._to_display_calibration_date()
             if self._state == StateMachine.S_DISPLAY_C_DATE:
-                return self._to_display_calibration_year()
-            if self._state == StateMachine.S_DISPLAY_C_YEAR:
                 return self._to_display_ra()
 
             # Programming states
@@ -1164,8 +1213,6 @@ class StateMachine:
                     return self._to_display_clock()
                 if self._programming_state == StateMachine.S_DISPLAY_C_DATE:
                     return self._to_display_calibration_date()
-                if self._programming_state == StateMachine.S_DISPLAY_C_YEAR:
-                    return self._to_display_calibration_year()
 
             # If all else fails, nothing to do
             return True
@@ -1180,8 +1227,6 @@ class StateMachine:
                 return self._to_program_clock()             
             if self._state == StateMachine.S_DISPLAY_C_DATE:
                 return self._to_program_calibration_day()             
-            if self._state == StateMachine.S_DISPLAY_C_YEAR:
-                return self._to_program_calibration_year()             
 
             # Move from left to right editing
             # Applies when editing the RA Target or Calibration Date
@@ -1345,22 +1390,6 @@ class StateMachine:
 
         return True
 
-    def _to_display_calibration_year(self) -> bool:
-        """Actions on entry to the DISPLAY_TIME state.
-        """
-        print('_to_display_calibration_year()')
-        
-        # Always clear any programming
-        self._clear_program_mode()
-        
-        # Always set the new state
-        self._state = StateMachine.S_DISPLAY_C_YEAR
-        # Initialise state variables
-        self._start_timer()
-        self._display.show_calibration_year(self._calibration_date)
-
-        return True
-
     def _to_program_ra_target_h(self) -> bool:
         
         print('_to_program_ra_target_h()')
@@ -1459,7 +1488,7 @@ class StateMachine:
         if not self._programming_value:
             # What is the value we're programming?
             c_date: CalibrationDate = self._ra_fram.read_calibration_date()
-            self._programming_value = f'{c_date.d:2d}{c_date.m:2d}'
+            self._programming_value = f'{c_date.d:2d}{_MONTH_NAME[c_date.m]}'
             self._display.show(self._programming_value)
 
         return True
@@ -1474,35 +1503,6 @@ class StateMachine:
         # Set programming mode
         self._programming_left = False
         self._programming_right = True
-
-        return True
-
-    def _to_program_calibration_year(self) -> bool:
-        
-        print('_to_program_calibration_year()')
-
-        # Always set the new state
-        self._state = StateMachine.S_PROGRAM_C_YEAR
-        
-        # Clear any countdown timer
-        # While programming there is no idle countdown.
-        self._to_idle_countdown = 0
-        # Set programming mode
-        self._programming = True
-        self._programming_left = True
-        self._programming_right = True
-        self._programming_left_on = True
-        self._programming_right_on = True
-        self._programming_state = StateMachine.S_DISPLAY_C_YEAR
-
-        # Start the timer
-        # (used to flash the appropriate part of the display)
-        self._start_timer(to_idle=False)
-
-        # What is the value we're programming?
-        c_date: CalibrationDate = self._ra_fram.read_calibration_date()
-        self._programming_value = f'{c_date.y}'
-        self._display.show(self._programming_value)
 
         return True
 
