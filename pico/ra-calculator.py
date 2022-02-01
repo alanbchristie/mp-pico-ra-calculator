@@ -51,11 +51,12 @@ _MIN_YEAR: int = 2022
 _MAX_YEAR: int = 9999
 
 # Configured I2C Pins
-_SCL: int = 17
+_I2C_ID: int = 0
 _SDA: int = 16
+_SCL: int = 17
 
-# A MicroPython i2c object (for special/unsupported devices)
-_I2C: I2C = I2C(id=0, scl=Pin(_SCL), sda=Pin(_SDA))
+# A MicroPython I2C object
+_I2C: I2C = I2C(id=_I2C_ID, scl=Pin(_SCL), sda=Pin(_SDA))
 
 # Find the LED displays (LTP305 devices) on 0x61, 0x62 or 0x63.
 # We must have two and the first becomes the left-hand pair of digits
@@ -120,20 +121,14 @@ _BUTTON_4: Pin = Pin(14, Pin.IN)
 _BUTTON_DEBOUNCE_MS: int = 50
 
 
-def is_leap_year(year) -> bool:
+def leap_year(year: int) -> bool:
     """Returns True of the given year is a leap year.
     """
-    if year % 4 == 0:
-        if year % 100 == 0:
-            if year % 400 == 0:
-                return True
-        else:
-            return True
-
-    return False
+    return year % 4 == 0 and year % 100 != 0 or year % 400 == 0
 
 
-def days_between_dates(year1, month1, day1, year2, month2, day2) -> int:
+def days_between_dates(year1: int, month1: int, day1: int,
+                       year2: int, month2: int, day2: int) -> int:
     """Returns the number of days between the given dates where,
     in our usage, the earlier data (the calibration date) is passed in
     using the "1" values and the current date usign the "2" values.
@@ -144,26 +139,26 @@ def days_between_dates(year1, month1, day1, year2, month2, day2) -> int:
     leap_cmtive_days = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
     tot_days = 0
     if year1 == year2:
-        if is_leap_year(year1):
+        if leap_year(year1):
             return (leap_cmtive_days[month2 - 1] + day2) - \
                    (leap_cmtive_days[month1 - 1] + day1)
         return (cmtive_days[month2 - 1] + day2) - \
                (cmtive_days[month1 - 1] + day1)
 
-    if is_leap_year(year1):
+    if leap_year(year1):
         tot_days = tot_days + 366 - (leap_cmtive_days[month1 - 1] + day1)
     else:
         tot_days = tot_days + 365 - (cmtive_days[month1 - 1] + day1)
 
     year = year1 + 1
     while year < year2:
-        if is_leap_year(year):
+        if leap_year(year):
             tot_days = tot_days + 366
         else:
             tot_days = tot_days + 365
         year = year + 1
 
-    if is_leap_year(year2):
+    if leap_year(year2):
         tot_days = tot_days + (leap_cmtive_days[month2 - 1] + day2)
     else:
         tot_days = tot_days + (cmtive_days[month2 - 1] + day2)

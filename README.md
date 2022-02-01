@@ -6,19 +6,18 @@
 
 ![Platform](https://img.shields.io/badge/platform-micropython-lightgrey)
 
-A Right Ascension (RA) real-time compensation calculator.
+A real-time Right Ascension (RA) compensation calculator.
 
 Given a target RA and calibration date this code displays the compensated
 RA value for a telescope with a fixed RA-aligned axis.
 
 It is designed to run on a Raspberry Pi [Pico] with the assistance of I2C-based
-[Real-Time Clock] module, a pair of [dot-matrix] displays, and a 32KByte [FRAM]
-memory module.
+devices that consist of a pair of [dot-matrix] displays, non-volatile memory
+in the form of a [FRAM], and a [Real-Time Clock] module.
 
 ![schematic](ra-calculator.png)
 
-It's essentially a handly real-time implementation for use on a portable,
-battery-operated hardware that can be used in the field. It's based on the
+It's essentially a handy, portable, real-time implementation of the
 'trick' described in my related repository: -
 
 - https://github.com/alanbchristie/ra-converter
