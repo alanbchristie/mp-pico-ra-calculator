@@ -128,6 +128,12 @@ for month_name in _MONTH_NAME:
     assert month_name[0].isalpha()
     assert month_name[1].isalpha()
 
+# A map of cumulative Days by month.
+# Index is True for leap-year
+_CUMULATIVE_DAYS: Dict[bool, List[int]] = {
+    False: [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365],
+    True: [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366]}
+
 
 def leap_year(year: int) -> bool:
     """Returns True of the given year is a leap year.
@@ -135,43 +141,43 @@ def leap_year(year: int) -> bool:
     return year % 4 == 0 and year % 100 != 0 or year % 400 == 0
 
 
-def days_between_dates(year1: int, month1: int, day1: int,
-                       year2: int, month2: int, day2: int) -> int:
-    """Returns the number of days between the given dates where,
-    in our usage, the earlier data (the calibration date) is passed in
-    using the "1" values and the current date using the "2" values.
+def days_since_calibration(c_day: int, c_month: int,
+                           now_day: int, now_month: int, now_year: int)\
+        -> int:
+    """Returns the number of days since calibration. If calibration day was
+    yesterday '1' is returned. If it's the calibration day, '0' is returned.
+    The maximum returned value is 365 (when we span a leap-year).
+    At other times the maximum returned value is 364.
     """
-    # Cumulative Days by month
-    cmtive_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
-    # Cumulative Days by month for leap year
-    leap_cmtive_days = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
-    tot_days = 0
-    if year1 == year2:
-        if leap_year(year1):
-            return (leap_cmtive_days[month2 - 1] + day2) - \
-                   (leap_cmtive_days[month1 - 1] + day1)
-        return (cmtive_days[month2 - 1] + day2) - \
-               (cmtive_days[month1 - 1] + day1)
+    # Is it calibration day?
+    if c_month == now_month and c_day == now_day:
+        return 0
 
-    if leap_year(year1):
-        tot_days = tot_days + 366 - (leap_cmtive_days[month1 - 1] + day1)
+    # What's the offset today?
+    # It's the day, plus the cumulative days
+    # to the start of the current month, compensating for leap-year...
+    now_offset: int = now_day +\
+        _CUMULATIVE_DAYS[leap_year(now_year)][now_month - 1]
+
+    # Does it look like now is before the calibration date?
+    # If so we assume calibration was last year -
+    # the calibration date cannot be n the future!
+    if now_month < c_month or now_month == c_month and now_day < c_day:
+        # Calibration year must have been last year.
+        c_offset: int = c_day +\
+            _CUMULATIVE_DAYS[leap_year(now_year - 1)][c_month - 1]
+        # Now we know calibration was last year,
+        # add all the days from last year to today
+        # Cumulate days to end of december last year...
+        now_offset += _CUMULATIVE_DAYS[leap_year(now_year - 1)][12]
     else:
-        tot_days = tot_days + 365 - (cmtive_days[month1 - 1] + day1)
+        # Calibration is the current year
+        c_offset: int = c_day
+        if c_month > 1:
+            c_offset += _CUMULATIVE_DAYS[leap_year(now_year)][c_month - 1]
 
-    year = year1 + 1
-    while year < year2:
-        if leap_year(year):
-            tot_days = tot_days + 366
-        else:
-            tot_days = tot_days + 365
-        year = year + 1
-
-    if leap_year(year2):
-        tot_days = tot_days + (leap_cmtive_days[month2 - 1] + day2)
-    else:
-        tot_days = tot_days + (cmtive_days[month2 - 1] + day2)
-
-    return tot_days
+    assert now_offset > c_offset
+    return now_offset - c_offset
 
 
 class FRAM:
@@ -501,12 +507,11 @@ class LTP305_Pair:
         date_day: int = rtc[2]
         date_month: int = rtc[1]
         date_year: int = rtc[0]
-        elapsed_days: int = days_between_dates(2022,
-                                               calibration_date.m,
-                                               calibration_date.d,
-                                               date_year,
-                                               date_month,
-                                               date_day)
+        elapsed_days: int = days_since_calibration(calibration_date.d,
+                                                   calibration_date.m,
+                                                   date_day,
+                                                   date_month,
+                                                   date_year)
         assert elapsed_days >= 0
         # If calibration was on the 4th and today is the 5th the days between
         # the dates is '1' but, the first 24 hours is handled by the
@@ -629,12 +634,10 @@ class RA_FRAM:
     # | *   5  | Calibration Date Marker
     # |     6  | Calibration Date (Day) [0..31]
     # |     7  | Calibration Date (Month) [1..12]
-    # |     8  | Calibration Date (Century) [20..]
-    # |     9  | Calibration Date (Year) [0..99]
     # +--------+----------------------------------
-    _OFFSET_BRIGHTNESS: int = 0       # 1 value 
-    _OFFSET_RA_TARGET: int = 2        # 2 values
-    _OFFSET_CALIBRATION_DATE: int = 5 # 4 values
+    _OFFSET_BRIGHTNESS: int = 0        # 1 value
+    _OFFSET_RA_TARGET: int = 2         # 2 values
+    _OFFSET_CALIBRATION_DATE: int = 5  # 2 values
 
     def __init__(self, fram):
         # Save the FRAM reference
@@ -778,7 +781,7 @@ class RA_FRAM:
         # Is there a value in the FRAM?
         # If so, read it, put it in the cache and return it.
         if self._is_value_valid(RA_FRAM._OFFSET_CALIBRATION_DATE):
-            value: List[int] = self._read_values(RA_FRAM._OFFSET_CALIBRATION_DATE, 4)
+            value: List[int] = self._read_values(RA_FRAM._OFFSET_CALIBRATION_DATE, 2)
             self._calibration_date = CalibrationDate(value[0], value[1])
             return self._calibration_date
         # No cached value,
@@ -792,9 +795,7 @@ class RA_FRAM:
         print(f'RA_FRAM write_calibration_date({calibration_date})...')
 
         # Write to FRAN
-        century: int = calibration_date.y // 100
-        year: int = 2022
-        values: List[int] = [calibration_date.d, calibration_date.m, century, year]
+        values: List[int] = [calibration_date.d, calibration_date.m]
         self._write_value(RA_FRAM._OFFSET_CALIBRATION_DATE, values)
         
         # Finally, save the value to the cached value
