@@ -16,7 +16,7 @@ from ucollections import namedtuple # type: ignore
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
 
-# Do we light the onbaord LED when we start?
+# Do we light the onboard LED when we start?
 _LIGHT_ONBOARD_LED: bool = False
 # The Pico on-board LED
 _ONBOARD_LED: Pin = Pin(25, Pin.OUT)
@@ -26,12 +26,8 @@ RA: namedtuple = namedtuple('RA', ('h', 'm'))
 # A Calibration Date: day, month, year
 CalibrationDate: namedtuple = namedtuple('CalibrationDate', ('d', 'm', 'y'))
 
-# The target RA (Capell, the brightest star in the constellation of Auriga).
-# This is the Right Ascension of the target object.
-# If the scope is aligned south at midnight on the date of calibration,
-# this will be the value required on its RA axis.
-# We add the current time (if it's not midnight) to this value and
-# 4 minutes for each day since the calibration.
+# The target RA (Capella, the brightest star in the constellation of Auriga).
+# This is the Right Ascension of the default target object.
 DEFAULT_RA_TARGET: RA = RA(5, 16)
 
 # The date the telescope's RA axis was calibrated.
@@ -61,7 +57,7 @@ _SDA: int = 16
 # A MicroPython i2c object (for special/unsupported devices)
 _I2C: I2C = I2C(id=0, scl=Pin(_SCL), sda=Pin(_SDA))
 
-# Find the LED displays (LTP305 devcies) on 0x61, 0x62 or 0x63.
+# Find the LED displays (LTP305 devices) on 0x61, 0x62 or 0x63.
 # We must have two and the first becomes the left-hand pair of digits
 # (the hour) for the RA/Clock display.
 _RA_DISPLAY_H_ADDRESS: Optional[int] = None
@@ -76,8 +72,8 @@ for device_address in _DEVICE_ADDRESSES:
             # Second goes to 'M'
             _RA_DISPLAY_M_ADDRESS = device_address
     if _RA_DISPLAY_M_ADDRESS:
-        # We've set the 2nd device,
-        # we can stop assinging
+        # We've set the 2nd device,
+        # we can stop assigning
         break
 assert _RA_DISPLAY_H_ADDRESS
 assert _RA_DISPLAY_M_ADDRESS
@@ -290,17 +286,12 @@ class LTP305:
         """Clear both LED matrices.
 
         Must call .show() to display changes.
-
         """
         self._buf_matrix_left = [0 for _ in range(8)]
         self._buf_matrix_right = [0 for _ in range(8)]
 
     def set_brightness(self, brightness: float, update: bool = False) -> None:
-        """Set brightness of both LED matrices.
-
-        :param brightness: LED brightness from 0.0 to 1.0
-        :param update: Push change to display immediately (otherwise you must call .show())
-
+        """Set brightness of both LED matrices (from 0.0 to 1.0).
         """
         assert brightness >= 0.0
         assert brightness <= 1.0
@@ -338,10 +329,6 @@ class LTP305:
 
     def set_character(self, x: int, char: Union[int, str]) -> None:
         """Set a single character.
-
-        :param x: x position, 0 for left, 5 for right, or in between if you fancy
-        :param char: string character or char ordinal
-
         """
         if not isinstance(char, int):
             assert isinstance(char, str)
@@ -377,7 +364,7 @@ class LTP305:
 
 class LTP305_Pair:
     """A wrapper around two LTP305 objects to form a Right-Ascension display.
-    Basically a clock, but given "[HH][mm]". The dsiaply can also be used
+    Basically a clock, but given "[HH][mm]". The pair can also be used
     to display the target RA, the current time, the calibration date, and
     year.
     """
@@ -388,7 +375,7 @@ class LTP305_Pair:
                  address_h: int,
                  address_m: int,
                  brightness: int = _MIN_BRIGHTNESS):
-        """Initialises the RA object, given a i2c instance and optional
+        """Initialises the RA object, given an i2c instance and optional
         display addresses and brightness.
         """
         assert i2c
@@ -431,7 +418,7 @@ class LTP305_Pair:
 
         # Read the RTC
         # We're given an 8-value tuple with the following content:
-        # (year, month, day, weekday, hours, minutes, seconds, subseconds)
+        # (year, month, day, weekday, hours, minutes, seconds, sub-seconds)
         rtc = self._rtc.datetime()      
         # We just need 'HH:MM', which we'll call 'clock'.
         clock: str = f'{rtc[4]:02d}:{rtc[5]:02d}'
@@ -445,13 +432,12 @@ class LTP305_Pair:
         scope_ra_minutes: int = target_ra_minutes + clock_minutes
         # Then, we add 1 minute for every 6 hours on the clock.
         # i.e. after every 6 hours the celestial bodies will move by 1 minute.
-        # This accomodates the sky's progression for the current day.
+        # This accommodates the sky's progression for the current day.
         sub_day_offset: int = clock_hours // 6
         scope_ra_minutes += sub_day_offset
         # Then, add 4 minutes for each whole day since calibration.
         # The RTC date format is 'dd/mm/yyyy'.
         # The celestial bodies drift by 4 minutes per day
-        # (essentially that's what the extra day in the leap-year is all about).
         # The maximum correction is 364 days. After each year we're back to
         # a daily offset of '0'.
         date_day: int = rtc[2]
@@ -464,8 +450,8 @@ class LTP305_Pair:
                                                date_month,
                                                date_day)
         assert elapsed_days >= 0
-        # If caliration was on the 4th and today is the 5th the days between the
-        # dates is '1' but, the first 24 hours is handled by the
+        # If caliration was on the 4th and today is the 5th the days between
+        # the dates is '1' but, the first 24 hours is handled by the
         # 'sub_day_offset' so we must only count whole days, i.e. we subtract
         # '1' from the result to accommodate the
         # 'sub_day_offset'.
@@ -576,14 +562,14 @@ class RA_FRAM:
     # Default brightness (lowest)
     DEFAULT_BRIGHTNESS: int = _MIN_BRIGHTNESS
 
-    # Markers
+    # Markers.
     # Values that prefix every stored value. These are used to indicate
     # whether the value that follows is valid or invalid.
     # Markers (and data values) must be +ve byte values (0-127)
     _INVALID: int = 0
     _VALID: int = 33
 
-    # Memory Map
+    # Memory Map
     #
     # +--------+----------------------------------
     # | Offset | Purpose
@@ -617,7 +603,7 @@ class RA_FRAM:
         assert offset >= 0
         
         # Set marker to invalid
-        # Write value (or values)
+        # Write value (or values)
         # Set marker to valid
         print(f'RA_FRAM Write {value} @{offset}')
         self._fram.write_byte(offset, RA_FRAM._INVALID)
@@ -780,7 +766,7 @@ class RA_FRAM:
 
 # The command queue - the object between the
 # buttons, timers and the main-loop state machine.
-# For now we only handle one command at a time,
+# At the moment we only handle one command at a time,
 # i.e. queue size is 1.
 class CommandQueue:
 
@@ -805,15 +791,15 @@ class CommandQueue:
 
 
 # CommandQueue commands (just unique integers)
-_CMD_BUTTON_1: int = 1  # Button 1 has been pressed
-_CMD_BUTTON_2: int = 2  # Button 2 has been pressed
-_CMD_BUTTON_2_LONG: int = 22 # Button 2 has been pressed for a long time
-_CMD_BUTTON_3: int = 3  # Button 3 has been pressed
-_CMD_BUTTON_4: int = 4  # Button 4 has been pressed
-_CMD_TICK: int = 10     # The timer has fired
+_CMD_BUTTON_1: int = 1          # Button 1 has been pressed
+_CMD_BUTTON_2: int = 2          # Button 2 has been pressed
+_CMD_BUTTON_2_LONG: int = 22    # Button 2 has been pressed for a long time
+_CMD_BUTTON_3: int = 3          # Button 3 has been pressed
+_CMD_BUTTON_4: int = 4          # Button 4 has been pressed
+_CMD_TICK: int = 10             # The timer has fired
 
 # Use the RTC from MicroPython.
-# Connected to our RTC module by the Pimoronit custom image.
+# Connected to our RTC module by the Pimoroni custom image.
 _RTC: RTC = RTC()
 
 # Create the RA display object
@@ -824,7 +810,7 @@ _RA_DISPLAY: LTP305_Pair =\
 
 def btn_1(pin: Pin) -> None:
     """The '**DISPLAY** button. Pressing this when the display is off
-    will disply the current (real-time) RA axis compensataion value.
+    will display the current (real-time) RA axis compensation value.
     When the display is on it cycles between this and displaying the target RA,
     The current time, the calibration day and month and the calibration year.
     """
@@ -844,13 +830,13 @@ def btn_1(pin: Pin) -> None:
 def btn_2(pin: Pin) -> None:
     """The **PROGRAM** button. Pressing this when the display is on allows
     adjustments to the displayed value. The compensated RA value cannot
-    be adjusted. The taregt RA is calculated automatically from the current time
+    be adjusted. The target RA is calculated automatically from the current time
     and calibration date. When pressed during the display of target RA, current
-    time or clibration values the values flash and the UP/DOWN buttons
+    time or calibration values the values flash and the UP/DOWN buttons
     can be used to alter the displayed value.
 
     Pressing the program button for at least 3 seconds saves the value.
-    Presssing MODE cancels the change.
+    Pressing MODE cancels the change.
     """
 
     pin.irq(handler=None)
@@ -1156,7 +1142,7 @@ class StateMachine:
 
             # If not in programming mode we switch to another item to display.
             # Here we cancel programming mode if it's set
-            # and then enter the normal mode of the item beign displayed.
+            # and then enter the normal mode of the item being displayed.
 
             # Non-programming states
             if self._state == StateMachine.S_IDLE:
@@ -1186,7 +1172,7 @@ class StateMachine:
                 if self._programming_state == StateMachine.S_DISPLAY_C_YEAR:
                     return self._to_display_calibration_year()
 
-            # Otherwise nothing to do
+            # If all else fails, nothing to do
             return True
 
         if command == _CMD_BUTTON_2:
@@ -1214,11 +1200,7 @@ class StateMachine:
             if self._state == StateMachine.S_PROGRAM_C_MONTH:
                 return self._to_program_calibration_day()             
 
-            # Out of programming mode (from programming states)
-            # Here we commit the change and return to normal mode.
-            # TODO
-                
-            # Otherwise nothing to do
+            # If we get here, nothing to do
             return True
 
         if command == _CMD_BUTTON_2_LONG:
@@ -1230,6 +1212,8 @@ class StateMachine:
                 assert self._programming_value
                 if self._state in[StateMachine.S_PROGRAM_RA_TARGET_H,
                                   StateMachine.S_PROGRAM_RA_TARGET_M]:
+
+                    # The Target RA was being edited
                     ra_h: int = int(self._programming_value[:2])
                     ra_m: int = int(self._programming_value[2:])
                     self._ra_target = RA(ra_h, ra_m)
@@ -1244,7 +1228,7 @@ class StateMachine:
         if command == _CMD_BUTTON_3:
             # "DOWN" button
 
-            if not self._state in [StateMachine.S_IDLE]:
+            if self._state not in [StateMachine.S_IDLE]:
                 if self._programming:
                     self._program_down()
                 else:
@@ -1280,7 +1264,7 @@ class StateMachine:
         return False
     
     def reset(self) -> None:
-        """Called fromt he main loop to reset (stop) the machine.
+        """Called from the main loop to reset (stop) the machine.
         """
         if self._timer:
             self._timer.deinit()
@@ -1291,7 +1275,7 @@ class StateMachine:
         """
         print('_to_idle()')
         
-        # ALways clear any programming
+        # Always clear any programming
         self._clear_program_mode()
         
         # Always set the new state
@@ -1307,7 +1291,7 @@ class StateMachine:
         """
         print('_to_display_ra()')
         
-        # ALways clear any programming
+        # Always clear any programming
         self._clear_program_mode()
         
         # Always set the new state
@@ -1323,7 +1307,7 @@ class StateMachine:
         """
         print('_to_display_ra_target()')
         
-        # ALways clear any programming
+        # Always clear any programming
         self._clear_program_mode()
         
         # Always set the new state
@@ -1339,7 +1323,7 @@ class StateMachine:
         """
         print('_to_display_clock()')
         
-        # ALways clear any programming
+        # Always clear any programming
         self._clear_program_mode()
         
         # Always set the new state
@@ -1355,7 +1339,7 @@ class StateMachine:
         """
         print('_to_display_calibration_date()')
         
-        # ALways clear any programming
+        # Always clear any programming
         self._clear_program_mode()
         
         # Always set the new state
@@ -1371,7 +1355,7 @@ class StateMachine:
         """
         print('_to_display_calibration_year()')
         
-        # ALways clear any programming
+        # Always clear any programming
         self._clear_program_mode()
         
         # Always set the new state
@@ -1392,7 +1376,7 @@ class StateMachine:
         # Clear any countdown timer
         # While programming there is no idle countdown.
         self._to_idle_countdown = 0
-        # Set prigramming mode
+        # Set programming mode
         self._programming = True
         self._programming_left = True
         self._programming_right = False
@@ -1419,7 +1403,7 @@ class StateMachine:
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_RA_TARGET_M
         
-        # Set prigramming mode
+        # Set programming mode
         self._programming_left = False
         self._programming_right = True
 
@@ -1435,7 +1419,7 @@ class StateMachine:
         # Clear any countdown timer
         # While programming there is no idle countdown.
         self._to_idle_countdown = 0
-        # Set prigramming mode
+        # Set programming mode
         self._programming = True
         self._programming_left = True
         self._programming_right = True
@@ -1465,7 +1449,7 @@ class StateMachine:
         # Clear any countdown timer
         # While programming there is no idle countdown.
         self._to_idle_countdown = 0
-        # Set prigramming mode
+        # Set programming mode
         self._programming = True
         self._programming_left = True
         self._programming_right = False
@@ -1492,7 +1476,7 @@ class StateMachine:
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_C_MONTH
         
-        # Set prigramming mode
+        # Set programming mode
         self._programming_left = False
         self._programming_right = True
 
@@ -1508,7 +1492,7 @@ class StateMachine:
         # Clear any countdown timer
         # While programming there is no idle countdown.
         self._to_idle_countdown = 0
-        # Set prigramming mode
+        # Set programming mode
         self._programming = True
         self._programming_left = True
         self._programming_right = True
@@ -1526,6 +1510,7 @@ class StateMachine:
         self._display.show(self._programming_value)
 
         return True
+
 
 # Main ------------------------------------------------------------------------
 
