@@ -172,7 +172,7 @@ def days_since_calibration(c_day: int, c_month: int,
         now_offset += _CUMULATIVE_DAYS[leap_year(now_year - 1)][12]
     else:
         # Calibration is the current year
-        c_offset: int = c_day
+        c_offset = c_day
         if c_month > 1:
             c_offset += _CUMULATIVE_DAYS[leap_year(now_year)][c_month - 1]
 
