@@ -59,15 +59,16 @@ DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1)
 # Minutes in one day
 _DAY_MINUTES: int = 1_440
 
-# Maxim days in a month (ignoring leap years)
-# First entry is zero, month index is 1-based (January = 1)
+# Maximum days in a month (ignoring leap years)
+# First entry (index 0) is invalid.
+# Month index is 1-based (January = 1)
 _DAYS: List[int] = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 # What constitutes a 'long' button press?
 # 2 seconds?
 _LONG_BUTTON_PRESS_MS: int = 2_000
 
-# Configured I2C Pins
+# Configured I2C controller and its GPIO pins
 _I2C_ID: int = 0
 _SDA: int = 16
 _SCL: int = 17
@@ -98,7 +99,7 @@ assert _RA_DISPLAY_M_ADDRESS
 print(f'RA.h device={hex(_RA_DISPLAY_H_ADDRESS)}')
 print(f'RA.m device={hex(_RA_DISPLAY_M_ADDRESS)}')
 
-# Did we have a Real-Time Clock (at 0x62)?
+# Do we have a Real-Time Clock (at 0x62)?
 _RTC_ADDRESS: Optional[int] = None
 if 0x52 in _DEVICE_ADDRESSES:
     _RTC_ADDRESS = 0x52
@@ -143,7 +144,7 @@ _BUTTON_DEBOUNCE_MS: int = 50
 _MONTH_NAME: List[str] = ['xx',  # Invalid (index = 0)
                           'Ja', 'Fe', 'Mc', 'Ap', 'Ma', 'Jn',
                           'Ju', 'Au', 'Se', 'Oc', 'No', 'De']
-# Must have 13 entries
+# Must have 13 entries (i.e. 12 plus dummy entry for month 0)
 # and every value must contain 2 letters
 assert len(_MONTH_NAME) == 13
 for month_name in _MONTH_NAME:
@@ -152,7 +153,7 @@ for month_name in _MONTH_NAME:
     assert month_name[1].isalpha()
 
 # A map of cumulative Days by month.
-# Index is True for leap-year
+# Index is True for leap-year.
 _CUMULATIVE_DAYS: Dict[bool, List[int]] = {
     False: [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365],
     True: [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366]}
