@@ -42,6 +42,14 @@ _ONBOARD_LED: Pin = Pin(25, Pin.OUT)
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
 # A Calibration Date: day, month
 CalibrationDate: namedtuple = namedtuple('CalibrationDate', ('d', 'm'))
+# A Real-Time Clock value
+RealTimeClock: namedtuple = namedtuple('RealTimeCLock', ('year',
+                                                         'month',
+                                                         'dom',
+                                                         'dow',
+                                                         'hour',
+                                                         'minute',
+                                                         'sec'))
 
 # The target RA (Capella, the brightest star in the constellation of Auriga).
 # This is the Right Ascension of the default target object.
@@ -115,12 +123,6 @@ if _FRAM_ADDRESS:
 else:
     print('FRAM (not found)')
 assert _FRAM_ADDRESS
-
-# Create an object from the expected (built-in) Pimoroni library
-# that gives us access to the RV3028 RTC. We use this
-# to set the value after editing.
-_PIMORONI_I2C: PimoroniI2C = PimoroniI2C(sda=_SDA, scl=_SCL)
-_RV3028_RTC: BreakoutRTC = BreakoutRTC(_PIMORONI_I2C)
 
 # Integer brightness limits (1..20).
 # i.e. 1 (smallest) == 0.05 and 20 (largest) == 1.0
@@ -206,6 +208,23 @@ def days_since_calibration(c_day: int, c_month: int,
     assert now_offset > c_offset
     return now_offset - c_offset
 
+
+class RTC:
+    """A wrapper around the RV3028 RTC I2C module.
+    """
+
+    def __init__(self):
+        # Create an object from the expected (built-in) Pimoroni library
+        # that gives us access to the RV3028 RTC. We use this
+        # to set the value after editing.
+        self._pimoroni_i2c: PimoroniI2C = PimoroniI2C(sda=_SDA, scl=_SCL)
+        self._rtc: BreakoutRTC = BreakoutRTC(self._pimoroni_i2c)
+        # Setting backup switchover mode to '3'
+        # switches to battery when supply drops out.
+        self._rtc.set_backup_switchover_mode(3)
+
+    def datetime(self) -> None:
+        pass
 
 class FRAM:
     """Driver for the FRAM breakout.
@@ -881,10 +900,6 @@ _CMD_BUTTON_3: int = 3          # Button 3 has been pressed
 _CMD_BUTTON_4: int = 4          # Button 4 has been pressed
 _CMD_TICK: int = 10             # The timer has fired
 
-# Use the RTC from MicroPython.
-# Connected to our RTC module by the Pimoroni custom image.
-_RTC: RTC = RTC()
-
 # Create the RA display object
 # (using the built-in MicroPython library)
 _RA_DISPLAY: LTP305Pair =\
@@ -1315,9 +1330,14 @@ class StateMachine:
                     # with the following content:
                     # (y, m, d, weekday, h, m, seconds, sub-seconds)
                     rtc = self._rtc.datetime()
+                    cur_y: int = rtc[0]
+                    cur_m: int = rtc[1]
+                    cur_dom: int = rtc[2]
+                    cur_dow: int = rtc[3]
                     # Rest the seconds
-                    new_rtc = (rtc[0], rtc[1], rtc[2], rtc[3],
+                    new_rtc = (cur_y, cur_m, cur_dom, cur_dow,
                                hour, minute, 0, 0)
+                    print(f'Setting datetime({new_rtc})..')
                     self._rtc.datetime(new_rtc)
                     # We also need to update the I2C RTC.
                     # The MicroPython RTC is just a copy of this.
@@ -1329,8 +1349,10 @@ class StateMachine:
                     # - day of month
                     # - month
                     # - year
-                    _RV3028_RTC.set_time(0, minute, hour,
-                                         rtc[3], rtc[2], rtc[1], rtc[0])
+                    result: bool = _RV3028_RTC.set_time(0, minute, hour,
+                                                        cur_dow, cur_dom,
+                                                        cur_m, cur_y)
+                    print(f'Setting RTC result={result}')
                     # And then move to displaying the clock
                     return self._to_display_clock()
 
