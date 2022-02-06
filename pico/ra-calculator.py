@@ -626,10 +626,11 @@ class RaFRAM:
 
     # Markers.
     # Values that prefix every stored value. These are used to indicate
-    # whether the value that follows is valid or invalid.
+    # whether the corresponding (potentially multibyte) value
+    # is either valid or invalid.
     # Markers (and data values) must be +ve byte values (0-127)
-    _INVALID: int = 0
-    _VALID: int = 33
+    _INVALID: int = 0   # The value cannot be trusted
+    _VALID: int = 33    # The value can be trusted
 
     # Memory Map
     #
@@ -645,9 +646,9 @@ class RaFRAM:
     # |     6  | Calibration Date (Day) [1..31]
     # |     7  | Calibration Date (Month) [1..12]
     # +--------+----------------------------------
-    _OFFSET_BRIGHTNESS: int = 0        # 1 value
-    _OFFSET_RA_TARGET: int = 2         # 2 values
-    _OFFSET_CALIBRATION_DATE: int = 5  # 2 values
+    _OFFSET_BRIGHTNESS: int = 0        # 1 byte
+    _OFFSET_RA_TARGET: int = 2         # 2 bytes
+    _OFFSET_CALIBRATION_DATE: int = 5  # 2 bytes
 
     def __init__(self, fram):
         # Save the FRAM reference
@@ -1280,6 +1281,26 @@ class StateMachine:
                     # With the RA target changed, the best state to
                     # return to is to display the new corrected RA
                     return self._to_display_ra()
+
+                if self._state in [StateMachine.S_PROGRAM_CLOCK]:
+
+                    # The clock was being edited
+                    hour: int = int(self._programming_value[:2])
+                    minute: int = int(self._programming_value[2:])
+                    # Read the current time and write the new
+                    # hours and minutes. We're given an 8-value tuple
+                    # with the following content:
+                    # (y, m, d, weekday, h, m, seconds, sub-seconds)
+                    rtc = self._rtc.datetime()
+                    # Rest the seconds
+                    new_rtc = (rtc[0], rtc[1], rtc[2], rtc[3],
+                               hour, minute, 0, 0)
+                    self._rtc.datetime(new_rtc)
+                    # We also need to update the i2c RTC,
+                    # The MicroPython RTC is just a copy of this.
+
+                    # And then move to displaying the clock
+                    return self._to_display_clock()
 
                 if self._state in [StateMachine.S_PROGRAM_C_MONTH,
                                    StateMachine.S_PROGRAM_C_DAY]:
