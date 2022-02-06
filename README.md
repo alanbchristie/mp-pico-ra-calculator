@@ -15,12 +15,17 @@ It is designed to run on a Raspberry Pi [Pico] with the assistance of I2C-based
 devices that consist of a pair of [dot-matrix] displays, non-volatile memory
 in the form of a [FRAM], and a [Real-Time Clock] module.
 
-![schematic](ra-calculator.png)
+![schematic](mp-pico-ra-calculator-schematic.png)
 
 It's essentially a handy, portable, real-time implementation of the
 'trick' described in my related repository: -
 
 - https://github.com/alanbchristie/ra-converter
+
+Which can be easily assembled on a prototype breadboard base that
+provides seating for all the devices and some handy buttons: -
+
+![breadboard](mp-pico-ra-calculator-breadboard.jpg)
 
 ---
 

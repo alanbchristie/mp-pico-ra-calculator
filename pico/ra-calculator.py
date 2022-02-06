@@ -1283,8 +1283,8 @@ class StateMachine:
                     # return to is to display the new corrected RA
                     return self._to_display_ra()
 
-                elif self._state in [StateMachine.S_PROGRAM_C_MONTH,
-                                     StateMachine.S_PROGRAM_C_DAY]:
+                if self._state in [StateMachine.S_PROGRAM_C_MONTH,
+                                   StateMachine.S_PROGRAM_C_DAY]:
 
                     # The calibration date was being edited
                     day: int = int(self._programming_value[:2])
