@@ -1,22 +1,15 @@
 """The real-time RA compensation calculator.
-
-To clear any stored values in the FRAM run _RA_FRAM.clear().
-
-Setting the initial time.
-The set_time() function takes values in the order:
-
-- seconds (0-60)
-- minutes (0-60)
-- hours (0-23)
-- day of the week (1-7 -> mon-sun)
-- day of month (1-31)
-- month (1-12)
-- year (2000-2099)
-
-To set to 14:46 20-Dec-21 (a Monday)...
-
-_RV3028_RTC.set_time(0, 46, 14, 1, 20, 12, 2021)
 """
+
+# To clear any stored values in the FRAM run: -
+#
+#    _RA_FRAM.clear()
+#
+# Setting the initial time of the RTC module. For example,
+# to set to 14:46 20-Dec-21 (a Monday): -
+#
+#    _RTC.datetime(RealTimeClock(2021, 12, 20, 1, 14, 46, 0))
+
 import time
 try:
     from typing import Dict, List, Optional, Tuple, Union
@@ -43,13 +36,14 @@ RA: namedtuple = namedtuple('RA', ('h', 'm'))
 # A Calibration Date: day, month
 CalibrationDate: namedtuple = namedtuple('CalibrationDate', ('d', 'm'))
 # A Real-Time Clock value
+# Year is full year, e.g. 2022
 RealTimeClock: namedtuple = namedtuple('RealTimeCLock', ('year',
                                                          'month',
                                                          'dom',
                                                          'dow',
-                                                         'hour',
-                                                         'minute',
-                                                         'sec'))
+                                                         'h',
+                                                         'm',
+                                                         's'))
 
 # The target RA (Capella, the brightest star in the constellation of Auriga).
 # This is the Right Ascension of the default target object.
@@ -210,10 +204,12 @@ def days_since_calibration(c_day: int, c_month: int,
 
 
 class RTC:
-    """A wrapper around the RV3028 RTC I2C module.
+    """A wrapper around the Pimoroni RV3028 RTC I2C breakout module.
     """
 
     def __init__(self):
+        """Initialises the object.
+        """
         # Create an object from the expected (built-in) Pimoroni library
         # that gives us access to the RV3028 RTC. We use this
         # to set the value after editing.
@@ -222,9 +218,42 @@ class RTC:
         # Setting backup switchover mode to '3'
         # switches to battery when supply drops out.
         self._rtc.set_backup_switchover_mode(3)
+        self._rtc.set_24_hour()
 
-    def datetime(self) -> None:
-        pass
+    def datetime(self, new_datetime: Optional[RealTimeClock] = None)\
+            -> RealTimeClock:
+        """Gets (or sets and returns) the real-time clock.
+        """
+        if new_datetime is not None:
+            # Given a date-time,
+            # so use it to set the RTC value.
+            self._rtc.set_time(new_datetime.s, new_datetime.m, new_datetime.h,
+                               new_datetime.dow,
+                               new_datetime.dom,
+                               new_datetime.month,
+                               new_datetime.year)
+
+        # Get the current RTC,
+        # waiting until an update is ready.
+        new_rtc: Optional[RealTimeClock] = None
+        while new_rtc is None:
+            if self._rtc.update_time():
+                new_rtc = RealTimeClock(
+                    self._rtc.get_year(),
+                    self._rtc.get_month(),
+                    self._rtc.get_date(),
+                    self._rtc.get_weekday(),
+                    self._rtc.get_hours(),
+                    self._rtc.get_minutes(),
+                    self._rtc.get_seconds())
+            else:
+                # No time available,
+                # sleep for a very short period (less than a second)
+                time.sleep_ms(250)  # type: ignore
+
+        assert new_rtc
+        return new_rtc
+
 
 class FRAM:
     """Driver for the FRAM breakout.
@@ -900,11 +929,6 @@ _CMD_BUTTON_3: int = 3          # Button 3 has been pressed
 _CMD_BUTTON_4: int = 4          # Button 4 has been pressed
 _CMD_TICK: int = 10             # The timer has fired
 
-# Create the RA display object
-# (using the built-in MicroPython library)
-_RA_DISPLAY: LTP305Pair =\
-    LTP305Pair(_I2C, _RTC, _RA_DISPLAY_H_ADDRESS, _RA_DISPLAY_M_ADDRESS)
-
 
 def btn_1(pin: Pin) -> None:
     """The '**DISPLAY** button. Creates the _CMD_BUTTON_1 command.
@@ -1002,9 +1026,18 @@ def tick(timer):
     assert timer
 
     _COMMAND_QUEUE.put(_CMD_TICK)
-    
+
+
+# Create RTC object and the RA display object
+# (using our real-time clock class)
+_RTC: RTC = RTC()
+_RA_DISPLAY: LTP305Pair =\
+    LTP305Pair(_I2C, _RTC, _RA_DISPLAY_H_ADDRESS, _RA_DISPLAY_M_ADDRESS)
+
 
 class StateMachine:
+    """The application state machine.
+    """
     # The states
     S_IDLE: int = 0
     S_DISPLAY_RA: int = 1
@@ -1022,7 +1055,7 @@ class StateMachine:
     # (8 is 4 seconds when the timer is 500mS)
     HOLD_TICKS: int = 8
     
-    def __init__(self, display: LTP305Pair, ra_fram: RaFRAM, rtc: RTC):
+    def __init__(self, display: LTP305Pair, ra_fram: RaFRAM, rtc: _RTC):
         assert display
         assert ra_fram
         assert rtc
@@ -1329,30 +1362,14 @@ class StateMachine:
                     # hours and minutes. We're given an 8-value tuple
                     # with the following content:
                     # (y, m, d, weekday, h, m, seconds, sub-seconds)
-                    rtc = self._rtc.datetime()
-                    cur_y: int = rtc[0]
-                    cur_m: int = rtc[1]
-                    cur_dom: int = rtc[2]
-                    cur_dow: int = rtc[3]
+                    rtc: RealTimeClock = self._rtc.datetime()
                     # Rest the seconds
-                    new_rtc = (cur_y, cur_m, cur_dom, cur_dow,
-                               hour, minute, 0, 0)
-                    print(f'Setting datetime({new_rtc})..')
-                    self._rtc.datetime(new_rtc)
-                    # We also need to update the I2C RTC.
-                    # The MicroPython RTC is just a copy of this.
-                    # Its arguments are: -
-                    # - seconds
-                    # - minutes
-                    # - hours
-                    # - day of the week
-                    # - day of month
-                    # - month
-                    # - year
-                    result: bool = _RV3028_RTC.set_time(0, minute, hour,
-                                                        cur_dow, cur_dom,
-                                                        cur_m, cur_y)
-                    print(f'Setting RTC result={result}')
+                    rtc.h = hour
+                    rtc.m = minute
+                    rtc.s = 0
+                    print(f'Setting datetime({rtc})..')
+                    rtc_result = self._rtc.datetime(rtc)
+                    print(f'Setting RTC result={rtc_result}')
                     # And then move to displaying the clock
                     return self._to_display_clock()
 
