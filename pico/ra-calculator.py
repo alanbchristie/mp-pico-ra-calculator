@@ -10,8 +10,8 @@ except ImportError:
 
 # pylint: disable=import-error
 import micropython  # type: ignore
-from machine import I2C, Pin, RTC,Timer  # type: ignore
-from ucollections import namedtuple # type: ignore
+from machine import I2C, Pin, RTC, Timer  # type: ignore
+from ucollections import namedtuple  # type: ignore
 
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
@@ -39,6 +39,10 @@ DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1)
 
 # Minutes in one day
 _DAY_MINUTES: int = 1_440
+
+# Maxim days in a month (ignoring leap years)
+# First entry is zero, month index is 1-based (January = 1)
+_DAYS: List[int] = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 # What constitutes a 'long' button press?
 # 2 seconds?
@@ -200,7 +204,8 @@ class FRAM:
 
     def write_byte(self, offset: int, byte_value: int) -> bool:
         """Writes a single value (expected to be a byte).
-        For now it's assumed to be a +ve value (including zero), i.e. 0-127
+        Our implementation assumes the value is +ve (including zero),
+        e.g. 0..127.
         """
         # Max offset is 32K
         assert offset >= 0
@@ -208,17 +213,18 @@ class FRAM:
         assert byte_value >= 0
         assert byte_value < 128
 
-        print(f' FRAM write_byte({offset}, {byte_value}) [{hex(self._address)}]')
+        print(f' FRAM write_byte({offset}, {byte_value})'
+              f' [{hex(self._address)}]')
 
-        num_acks = self._i2c.writeto(self._address,
-                                     bytes([offset >> 8,
-                                            offset & 0xff,
-                                            byte_value]))
-        if num_acks != 3:
+        num_ack = self._i2c.writeto(self._address,
+                                    bytes([offset >> 8,
+                                          offset & 0xff,
+                                          byte_value]))
+        if num_ack != 3:
             print(f'Failed to write to FRAM at {self._address}.' +
-                  f' Got {num_acks} acks, expected 3')
+                  f' num_ack={num_ack}, expected 3')
 
-        return num_acks != 3
+        return num_ack != 3
 
     def read_byte(self, offset) -> int:
         """Reads a single byte, assumed to be in the range 0-127,
@@ -427,8 +433,8 @@ class LTP305:
                               LTP305.UPDATE.to_bytes(1, 'big'))
     
 
-class LTP305_Pair:
-    """A wrapper around two LTP305 objects to form a Right-Ascension display.
+class LTP305Pair:
+    """A wrapper around two LTP305 objects to form a 4-character display.
     Basically a clock, but given "[HH][mm]". The pair can also be used
     to display the target RA, the current time, and the calibration date.
     """
@@ -450,8 +456,12 @@ class LTP305_Pair:
         self._rtc = rtc
         self._brightness: float = brightness / _MAX_BRIGHTNESS
         
-        self.h_matrix = LTP305(i2c, address=address_h, brightness=self._brightness)
-        self.m_matrix = LTP305(i2c, address=address_m, brightness=self._brightness)
+        self.h_matrix = LTP305(i2c,
+                               address=address_h,
+                               brightness=self._brightness)
+        self.m_matrix = LTP305(i2c,
+                               address=address_m,
+                               brightness=self._brightness)
         
     def set_brightness(self, brightness: int) -> None:
         assert brightness >= _MIN_BRIGHTNESS
@@ -473,7 +483,7 @@ class LTP305_Pair:
             self.m_matrix.show()
 
     def show_ra(self, ra_target: RA, calibration_date: CalibrationDate)\
-               -> None:
+            -> None:
         """Uses the RTC to calculate the corrected RA value for the
         given RA target value and its calibration date (with defaults).
         """
@@ -597,7 +607,7 @@ class LTP305_Pair:
         self.m_matrix.show()
 
 
-class RA_FRAM:
+class RaFRAM:
     """A RA wrapper around a FRAM class. This class provides convenient
     RA-specific storage using the underlying FRAM. Here we provide
     methods to simplify the storage and retrieval of 'brightness',
@@ -632,7 +642,7 @@ class RA_FRAM:
     # |     3  | RA Target (Hours) [0..23]
     # |     4  | RA Target (Minutes) [0..59]
     # | *   5  | Calibration Date Marker
-    # |     6  | Calibration Date (Day) [0..31]
+    # |     6  | Calibration Date (Day) [1..31]
     # |     7  | Calibration Date (Month) [1..12]
     # +--------+----------------------------------
     _OFFSET_BRIGHTNESS: int = 0        # 1 value
@@ -656,7 +666,7 @@ class RA_FRAM:
         # Write value (or values)
         # Set marker to valid
         print(f'RA_FRAM Write {value} @{offset}')
-        self._fram.write_byte(offset, RA_FRAM._INVALID)
+        self._fram.write_byte(offset, RaFRAM._INVALID)
         if isinstance(value, int):
             assert value >= 0
             assert value <= 127
@@ -669,7 +679,7 @@ class RA_FRAM:
                 assert a_value <= 127
                 self._fram.write_byte(value_offset, a_value)
                 value_offset += 1
-        self._fram.write_byte(offset, RA_FRAM._VALID)
+        self._fram.write_byte(offset, RaFRAM._VALID)
         
     def _read_value(self, offset: int) -> int:
         """Reads the value form the offset.
@@ -706,7 +716,7 @@ class RA_FRAM:
         assert offset >= 0
         
         byte_value: int = self._fram.read_byte(offset)
-        value: bool = byte_value == RA_FRAM._VALID
+        value: bool = byte_value == RaFRAM._VALID
         print(f'RA_FRAM IsValid @{hex(offset)} [{byte_value}] {value}')
 
         return value
@@ -720,12 +730,12 @@ class RA_FRAM:
             return self._brightness
         # Is there a value in the FRAM?
         # If so, read it, put it in the cache and return it.
-        if self._is_value_valid(RA_FRAM._OFFSET_BRIGHTNESS):
-            self._brightness = self._read_value(RA_FRAM._OFFSET_BRIGHTNESS)
+        if self._is_value_valid(RaFRAM._OFFSET_BRIGHTNESS):
+            self._brightness = self._read_value(RaFRAM._OFFSET_BRIGHTNESS)
             return self._brightness
         # No cached value, no stored value,
         # so write and then return the default
-        self.write_brightness(RA_FRAM.DEFAULT_BRIGHTNESS)
+        self.write_brightness(RaFRAM.DEFAULT_BRIGHTNESS)
         assert self._brightness
         return self._brightness
     
@@ -736,7 +746,7 @@ class RA_FRAM:
         print(f'RA_FRAM write_brightness({brightness})...')
 
         # Write to FRAM
-        self._write_value(RA_FRAM._OFFSET_BRIGHTNESS, brightness)
+        self._write_value(RaFRAM._OFFSET_BRIGHTNESS, brightness)
 
         # Finally, save the value to the cached value
         self._brightness = brightness
@@ -750,8 +760,8 @@ class RA_FRAM:
             return self._ra_target
         # Is there a value in the FRAM?
         # If so, read it, put it in the cache and return it.
-        if self._is_value_valid(RA_FRAM._OFFSET_RA_TARGET):
-            value: List[int] = self._read_values(RA_FRAM._OFFSET_RA_TARGET, 2)
+        if self._is_value_valid(RaFRAM._OFFSET_RA_TARGET):
+            value: List[int] = self._read_values(RaFRAM._OFFSET_RA_TARGET, 2)
             self._ra_target = RA(value[0], value[1])
             return self._ra_target
         # No cached value,
@@ -766,7 +776,7 @@ class RA_FRAM:
 
         # Write to FRAM
         values: List[int] = [ra_target.h, ra_target.m]
-        self._write_value(RA_FRAM._OFFSET_RA_TARGET, values)
+        self._write_value(RaFRAM._OFFSET_RA_TARGET, values)
 
         # Finally, save the value to the cached value
         self._ra_target = ra_target
@@ -780,8 +790,9 @@ class RA_FRAM:
             return self._calibration_date
         # Is there a value in the FRAM?
         # If so, read it, put it in the cache and return it.
-        if self._is_value_valid(RA_FRAM._OFFSET_CALIBRATION_DATE):
-            value: List[int] = self._read_values(RA_FRAM._OFFSET_CALIBRATION_DATE, 2)
+        if self._is_value_valid(RaFRAM._OFFSET_CALIBRATION_DATE):
+            value: List[int] =\
+                self._read_values(RaFRAM._OFFSET_CALIBRATION_DATE, 2)
             self._calibration_date = CalibrationDate(value[0], value[1])
             return self._calibration_date
         # No cached value,
@@ -789,14 +800,15 @@ class RA_FRAM:
         self.write_calibration_date(DEFAULT_CALIBRATION_DATE)
         return self._calibration_date
     
-    def write_calibration_date(self, calibration_date: CalibrationDate) -> None:
+    def write_calibration_date(self, calibration_date: CalibrationDate)\
+            -> None:
         assert calibration_date
 
         print(f'RA_FRAM write_calibration_date({calibration_date})...')
 
         # Write to FRAN
         values: List[int] = [calibration_date.d, calibration_date.m]
-        self._write_value(RA_FRAM._OFFSET_CALIBRATION_DATE, values)
+        self._write_value(RaFRAM._OFFSET_CALIBRATION_DATE, values)
         
         # Finally, save the value to the cached value
         self._calibration_date = calibration_date
@@ -806,9 +818,9 @@ class RA_FRAM:
         """
         print('RA_FRAM clear()...')
 
-        self._fram.write_byte(RA_FRAM._OFFSET_BRIGHTNESS, RA_FRAM._INVALID)
-        self._fram.write_byte(RA_FRAM._OFFSET_RA_TARGET, RA_FRAM._INVALID)
-        self._fram.write_byte(RA_FRAM._OFFSET_CALIBRATION_DATE, RA_FRAM._INVALID)
+        self._fram.write_byte(RaFRAM._OFFSET_BRIGHTNESS, RaFRAM._INVALID)
+        self._fram.write_byte(RaFRAM._OFFSET_RA_TARGET, RaFRAM._INVALID)
+        self._fram.write_byte(RaFRAM._OFFSET_CALIBRATION_DATE, RaFRAM._INVALID)
 
 
 # The command queue - the object between the
@@ -851,8 +863,8 @@ _RTC: RTC = RTC()
 
 # Create the RA display object
 # (using the built-in MicroPython library)
-_RA_DISPLAY: LTP305_Pair =\
-    LTP305_Pair(_I2C, _RTC, _RA_DISPLAY_H_ADDRESS, _RA_DISPLAY_M_ADDRESS)
+_RA_DISPLAY: LTP305Pair =\
+    LTP305Pair(_I2C, _RTC, _RA_DISPLAY_H_ADDRESS, _RA_DISPLAY_M_ADDRESS)
 
 
 def btn_1(pin: Pin) -> None:
@@ -971,7 +983,7 @@ class StateMachine:
     # (8 is 4 seconds when the timer is 500mS)
     HOLD_TICKS: int = 8
     
-    def __init__(self, display: LTP305_Pair, ra_fram: RA_FRAM, rtc: RTC):
+    def __init__(self, display: LTP305Pair, ra_fram: RaFRAM, rtc: RTC):
         assert display
         assert ra_fram
         assert rtc
@@ -983,13 +995,14 @@ class StateMachine:
         # When it reaches zero the display is cleared (mode returns to IDLE)
         self._to_idle_countdown: int = 0
         # The RA display and FRAM
-        self._display: LTP305_Pair = display
-        self._ra_fram: RA_FRAM = ra_fram
+        self._display: LTP305Pair = display
+        self._ra_fram: RaFRAM = ra_fram
         self._rtc: RTC = rtc
         # Brightness
         self._brightness: int = self._ra_fram.read_brightness()
         self._ra_target: RA = self._ra_fram.read_ra_target()
-        self._calibration_date: CalibrationDate = self._ra_fram.read_calibration_date()
+        self._calibration_date: CalibrationDate =\
+            self._ra_fram.read_calibration_date()
         self._display.set_brightness(self._brightness)
         
         # A Timer object.
@@ -1026,7 +1039,8 @@ class StateMachine:
         where the mode will rever to idle when the countdown is complete.
         """
         if self._timer is None:
-            self._timer = Timer(period=StateMachine.TIMER_PERIOD_MS, callback=tick)
+            self._timer = Timer(period=StateMachine.TIMER_PERIOD_MS,
+                                callback=tick)
         if to_idle:
             self._to_idle_countdown = StateMachine.HOLD_TICKS
                     
@@ -1085,6 +1099,9 @@ class StateMachine:
             month += 1
             if month > 12:
                 month = 1
+            # If the day number is now too large for this month,
+            # set it to the maximum for the current month.
+            day = min(_DAYS[month], day)
             new_month: str = _MONTH_NAME[month]
             self._programming_value = f'{day:2d}{new_month}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
@@ -1092,7 +1109,7 @@ class StateMachine:
             day = int(self._programming_value[:2])
             month = int(self._programming_value[2:])
             day += 1
-            if day > 31:
+            if day > _DAYS[month]:
                 day = 1
             self._programming_value = f'{day:2d}{month:2d}'
 
@@ -1129,6 +1146,9 @@ class StateMachine:
             month -= 1
             if month < 1:
                 month = 12
+            # If the day number is now too large for this month,
+            # set it to the maximum for the current month.
+            day = min(_DAYS[month], day)
             new_month: str = _MONTH_NAME[month]
             self._programming_value = f'{day:2d}{new_month}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
@@ -1137,7 +1157,7 @@ class StateMachine:
             month = int(self._programming_value[2:])
             day -= 1
             if day < 1:
-                day = 31
+                day = _DAYS[month]
             self._programming_value = f'{day:2d}{month:2d}'
     
     def process_command(self, command: int) -> bool:
@@ -1251,8 +1271,8 @@ class StateMachine:
             # Only act if we're in 'programming' mode.
             if self._programming:
                 assert self._programming_value
-                if self._state in[StateMachine.S_PROGRAM_RA_TARGET_H,
-                                  StateMachine.S_PROGRAM_RA_TARGET_M]:
+                if self._state in [StateMachine.S_PROGRAM_RA_TARGET_H,
+                                   StateMachine.S_PROGRAM_RA_TARGET_M]:
 
                     # The Target RA was being edited
                     ra_h: int = int(self._programming_value[:2])
@@ -1261,8 +1281,22 @@ class StateMachine:
                     self._ra_fram.write_ra_target(self._ra_target)
                     # With the RA target changed, the best state to
                     # return to is to display the new corrected RA
-                    return self._to_display_ra()           
-                
+                    return self._to_display_ra()
+
+                elif self._state in [StateMachine.S_PROGRAM_C_MONTH,
+                                     StateMachine.S_PROGRAM_C_DAY]:
+
+                    # The calibration date was being edited
+                    day: int = int(self._programming_value[:2])
+                    month: int = _MONTH_NAME.index(self._programming_value[2:])
+                    assert month >= 1
+                    self._calibration_date = CalibrationDate(day, month)
+                    self._ra_fram\
+                        .write_calibration_date(self._calibration_date)
+                    # With the calibration date changed, the best state to
+                    # return to is to display the new corrected date
+                    return self._to_display_calibration_date()
+
             # Nothing to do yet
             return True
 
@@ -1286,7 +1320,7 @@ class StateMachine:
         if command == _CMD_BUTTON_4:
             # "UP" button
 
-            if not self._state in [StateMachine.S_IDLE]:
+            if self._state not in [StateMachine.S_IDLE]:
                 if self._programming:
                     self._program_up()
                 else:
@@ -1518,7 +1552,7 @@ if __name__ == '__main__':
     
     # Create the FRAM instance
     _FRAM: FRAM = FRAM(_I2C, _FRAM_ADDRESS)
-    _RA_FRAM: RA_FRAM = RA_FRAM(_FRAM)
+    _RA_FRAM: RaFRAM = RaFRAM(_FRAM)
     # Create the StateMachine instance
     _STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM, _RTC)
     # Command 'queue'
