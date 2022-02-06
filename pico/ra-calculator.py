@@ -9,6 +9,10 @@
 # to set to 14:46 20-Dec-21 (a Monday): -
 #
 #    _RTC.datetime(RealTimeClock(2021, 12, 20, 1, 14, 46, 0))
+#
+# Our interpretation of thew day of the week is 1..7 (unused).
+# To the underlying RTC (RV3028) is simply a 3-bit value that repeats
+# values from 0..6. The RV3028 will operate correctly from 2000 to 2099.
 
 import time
 try:
@@ -227,14 +231,15 @@ class RTC:
         if new_datetime is not None:
             # Given a date-time,
             # so use it to set the RTC value.
+            assert new_datetime.dow > 0
             self._rtc.set_time(new_datetime.s, new_datetime.m, new_datetime.h,
-                               new_datetime.dow,
+                               new_datetime.dow - 1,
                                new_datetime.dom,
                                new_datetime.month,
                                new_datetime.year)
 
-        # Get the current RTC,
-        # waiting until an update is ready.
+        # Get the current RTC value,
+        # waiting until a value is ready.
         new_rtc: Optional[RealTimeClock] = None
         while new_rtc is None:
             if self._rtc.update_time():
@@ -242,7 +247,7 @@ class RTC:
                     self._rtc.get_year(),
                     self._rtc.get_month(),
                     self._rtc.get_date(),
-                    self._rtc.get_weekday(),
+                    self._rtc.get_weekday() + 1,
                     self._rtc.get_hours(),
                     self._rtc.get_minutes(),
                     self._rtc.get_seconds())
@@ -251,7 +256,6 @@ class RTC:
                 # sleep for a very short period (less than a second)
                 time.sleep_ms(250)  # type: ignore
 
-        assert new_rtc
         return new_rtc
 
 
