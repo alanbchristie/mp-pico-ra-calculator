@@ -213,7 +213,7 @@ class FRAM:
         assert byte_value >= 0
         assert byte_value < 128
 
-        print(f' FRAM write_byte({offset}, {byte_value})'
+        print(f' FRAM write_byte({offset}, {byte_value})' +
               f' [{hex(self._address)}]')
 
         num_ack = self._i2c.writeto(self._address,
@@ -1102,16 +1102,15 @@ class StateMachine:
             # If the day number is now too large for this month,
             # set it to the maximum for the current month.
             day = min(_DAYS[month], day)
-            new_month: str = _MONTH_NAME[month]
-            self._programming_value = f'{day:2d}{new_month}'
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
             # Adjust the day only
             day = int(self._programming_value[:2])
-            month = int(self._programming_value[2:])
+            month = _MONTH_NAME.index(self._programming_value[2:])
             day += 1
             if day > _DAYS[month]:
                 day = 1
-            self._programming_value = f'{day:2d}{month:2d}'
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
 
     def _program_down(self) -> None:
         """Called when the 'DOWN' button has been pressed in program mode.
@@ -1149,16 +1148,15 @@ class StateMachine:
             # If the day number is now too large for this month,
             # set it to the maximum for the current month.
             day = min(_DAYS[month], day)
-            new_month: str = _MONTH_NAME[month]
-            self._programming_value = f'{day:2d}{new_month}'
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
         elif self._state == StateMachine.S_PROGRAM_C_DAY:
             # Adjust the day only
             day = int(self._programming_value[:2])
-            month = int(self._programming_value[2:])
+            month = _MONTH_NAME.index(self._programming_value[2:])
             day -= 1
             if day < 1:
                 day = _DAYS[month]
-            self._programming_value = f'{day:2d}{month:2d}'
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
     
     def process_command(self, command: int) -> bool:
         """Process a command, where the actions depend on the
