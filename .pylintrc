@@ -1,6 +1,5 @@
 [MESSAGES CONTROL]
 disable=broad-except,
-        fixme,
         invalid-name,
         missing-class-docstring,
         missing-function-docstring,
