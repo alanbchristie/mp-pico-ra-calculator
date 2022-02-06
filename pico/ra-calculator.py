@@ -1,6 +1,21 @@
 """The real-time RA compensation calculator.
 
 To clear any stored values in the FRAM run _RA_FRAM.clear().
+
+Setting the initial time.
+The set_time() function takes values in the order:
+
+- seconds (0-60)
+- minutes (0-60)
+- hours (0-23)
+- day of the week (1-7 -> mon-sun)
+- day of month (1-31)
+- month (1-12)
+- year (2000-2099)
+
+To set to 14:46 20-Dec-21 (a Monday)...
+
+_RV3028_RTC.set_time(0, 46, 14, 1, 20, 12, 2021)
 """
 import time
 try:
@@ -12,6 +27,8 @@ except ImportError:
 import micropython  # type: ignore
 from machine import I2C, Pin, RTC, Timer  # type: ignore
 from ucollections import namedtuple  # type: ignore
+from pimoroni_i2c import PimoroniI2C  # type: ignore
+from breakout_rtc import BreakoutRTC  # type: ignore
 
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
@@ -98,6 +115,12 @@ if _FRAM_ADDRESS:
 else:
     print('FRAM (not found)')
 assert _FRAM_ADDRESS
+
+# Create an object from the expected (built-in) Pimoroni library
+# that gives us access to the RV3028 RTC. We use this
+# to set the value after editing.
+_PIMORONI_I2C: PimoroniI2C = PimoroniI2C(sda=_SDA, scl=_SCL)
+_RV3028_RTC: BreakoutRTC = BreakoutRTC(_PIMORONI_I2C)
 
 # Integer brightness limits (1..20).
 # i.e. 1 (smallest) == 0.05 and 20 (largest) == 1.0
@@ -1296,9 +1319,18 @@ class StateMachine:
                     new_rtc = (rtc[0], rtc[1], rtc[2], rtc[3],
                                hour, minute, 0, 0)
                     self._rtc.datetime(new_rtc)
-                    # We also need to update the i2c RTC,
+                    # We also need to update the I2C RTC.
                     # The MicroPython RTC is just a copy of this.
-
+                    # Its arguments are: -
+                    # - seconds
+                    # - minutes
+                    # - hours
+                    # - day of the week
+                    # - day of month
+                    # - month
+                    # - year
+                    _RV3028_RTC.set_time(0, minute, hour,
+                                         rtc[3], rtc[2], rtc[1], rtc[0])
                     # And then move to displaying the clock
                     return self._to_display_clock()
 
