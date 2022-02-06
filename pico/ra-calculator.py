@@ -254,7 +254,6 @@ class RTC:
             else:
                 # No time available,
                 # sleep for a very short period (less than a second)
-                # pylint: disable=no-member
                 time.sleep_ms(250)  # type: ignore
 
         return new_rtc
@@ -949,7 +948,6 @@ def btn_1(pin: Pin) -> None:
     # pause here for a debounce period. If the pin is still pressed
     # after we wake up then we can safely react to the button.
     pin.irq(handler=None)
-    # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
         _COMMAND_QUEUE.put(_CMD_BUTTON_1)
@@ -970,7 +968,6 @@ def btn_2(pin: Pin) -> None:
     """
 
     pin.irq(handler=None)
-    # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     # Measure the time pressed.
     # Less than 3 seconds we insert a _CMD_BUTTON_2 command,
@@ -1000,7 +997,6 @@ def btn_3(pin: Pin) -> None:
     """
 
     pin.irq(handler=None)
-    # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
         _COMMAND_QUEUE.put(_CMD_BUTTON_3)
@@ -1016,7 +1012,6 @@ def btn_4(pin: Pin) -> None:
     """
 
     pin.irq(handler=None)
-    # pylint: disable=no-member
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
         _COMMAND_QUEUE.put(_CMD_BUTTON_4)
