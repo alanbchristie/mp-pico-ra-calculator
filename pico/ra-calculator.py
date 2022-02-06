@@ -6,13 +6,9 @@
 #    _RA_FRAM.clear()
 #
 # Setting the initial time of the RTC module. For example,
-# to set to 14:46 20-Dec-21 (a Monday): -
+# to set to 14:46 6-Feb-22 (a Sunday, day 6): -
 #
-#    _RTC.datetime(RealTimeClock(2021, 12, 20, 1, 14, 46, 0))
-#
-# Our interpretation of thew day of the week is 1..7 (unused).
-# To the underlying RTC (RV3028) is simply a 3-bit value that repeats
-# values from 0..6. The RV3028 will operate correctly from 2000 to 2099.
+#    _RTC.datetime(RealTimeClock(2022, 2, 6, 6, 14, 46, 0))
 
 import time
 try:
@@ -231,6 +227,9 @@ class RTC:
         if new_datetime is not None:
             # Given a date-time,
             # so use it to set the RTC value.
+            #
+            # We used a 1-based day of the week,
+            # the underlying RTC uses 0-based.
             assert new_datetime.dow > 0
             self._rtc.set_time(new_datetime.s, new_datetime.m, new_datetime.h,
                                new_datetime.dow - 1,
