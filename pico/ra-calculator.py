@@ -18,7 +18,7 @@ except ImportError:
 
 # pylint: disable=import-error
 import micropython  # type: ignore
-from machine import I2C, Pin, RTC, Timer  # type: ignore
+from machine import I2C, Pin, Timer  # type: ignore
 from ucollections import namedtuple  # type: ignore
 from pimoroni_i2c import PimoroniI2C  # type: ignore
 from breakout_rtc import BreakoutRTC  # type: ignore
@@ -93,8 +93,6 @@ for device_address in _DEVICE_ADDRESSES:
         # We've set the 2nd device,
         # we can stop assigning
         break
-assert _RA_DISPLAY_H_ADDRESS
-assert _RA_DISPLAY_M_ADDRESS
 print(f'RA.h device={hex(_RA_DISPLAY_H_ADDRESS)}')
 print(f'RA.m device={hex(_RA_DISPLAY_M_ADDRESS)}')
 
@@ -106,7 +104,6 @@ if _RTC_ADDRESS:
     print(f'RTC  device={hex(_RTC_ADDRESS)}')
 else:
     print('RTC (not found)')
-assert _RTC_ADDRESS
 
 # Is there a FRAM device (at 0x50)?
 _FRAM_ADDRESS: Optional[int] = None
@@ -116,7 +113,11 @@ if _FRAM_ADDRESS:
     print(f'FRAM device={hex(_FRAM_ADDRESS)}')
 else:
     print('FRAM (not found)')
+
+assert _RA_DISPLAY_H_ADDRESS
+assert _RA_DISPLAY_M_ADDRESS
 assert _FRAM_ADDRESS
+assert _RTC_ADDRESS
 
 # Integer brightness limits (1..20).
 # i.e. 1 (smallest) == 0.05 and 20 (largest) == 1.0
@@ -253,6 +254,7 @@ class RTC:
             else:
                 # No time available,
                 # sleep for a very short period (less than a second)
+                # pylint: disable=no-member
                 time.sleep_ms(250)  # type: ignore
 
         return new_rtc
