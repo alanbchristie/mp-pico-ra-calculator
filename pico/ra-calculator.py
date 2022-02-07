@@ -1,22 +1,34 @@
 """The real-time RA compensation calculator.
 """
 
-# To clear any stored values in the FRAM run: -
+# To erase our section of the FRAM run: -
 #
 #    _RA_FRAM.clear()
 #
-# Setting the initial time of the RTC module. For example,
-# to set to 14:46 6-Feb-22 (a Sunday, day 6): -
+# We do not use the MicroPython built-in RTC class instead we
+# use the RV3028 I2C module and, before running the code for the first time
+# we need to set the initial time.
 #
-#    _RTC.datetime(RealTimeClock(2022, 2, 6, 6, 14, 46, 0))
+# You can check the current RTC date and time with: -
+#
+#    _RTC.datetime()
+#
+# To set time and date to "14:46:25 7-Feb-22", a Monday,
+# which is day 1 at the application level, day 0 in the RTC module: -
+#
+#    _RTC.datetime(RealTimeClock(2022, 2, 7, 1, 14, 46, 25))
+#
+# If you haven't set the RTC you should set the _RUN variable
+# in this module to False. This can then be loaded (by something like Thonny)
+# and you'll have access to the objects described above to clear the FRAM
+# and set the date and time.
 
 import time
 try:
-    from typing import Dict, List, Optional, Tuple, Union
+    from typing import Dict, List, NoReturn, Optional, Tuple, Union
 except ImportError:
     pass
 
-# pylint: disable=import-error
 import micropython  # type: ignore
 from machine import I2C, Pin, Timer  # type: ignore
 from ucollections import namedtuple  # type: ignore
@@ -26,10 +38,17 @@ from breakout_rtc import BreakoutRTC  # type: ignore
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
 
+# _RUN
+#
+# Setting this to False will avoid running the application.
+# Setting to False is useful because you get all the
+# global objects and can manually configure/erase the FRAM
+# and set the RTC module.
+_RUN: bool = True
+
 # Do we light the onboard LED when we start?
+# This action occurs regardless of the _RUN value.
 _LIGHT_ONBOARD_LED: bool = False
-# The Pico on-board LED
-_ONBOARD_LED: Pin = Pin(25, Pin.OUT)
 
 # An RA value: hours and minutes.
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
@@ -50,22 +69,14 @@ RealTimeClock: namedtuple = namedtuple('RealTimeCLock', ('year',
 DEFAULT_RA_TARGET: RA = RA(5, 16)
 
 # The date the telescope's RA axis was calibrated.
-# A tuple of day, month. We don't need the
-# calibrated RA axis value, just the date it was calibrated.
-# For each day beyond this (looping every 365 days) we add 4 minutes
-# to the calibrated value.
+# We don't need the calibrated RA axis value, just the day and month
+# (where 1==January) it was calibrated.
 DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1)
 
 # Minutes in one day
 _DAY_MINUTES: int = 1_440
 
-# Maximum days in a month (ignoring leap years)
-# First entry (index 0) is invalid.
-# Month index is 1-based (January = 1)
-_DAYS: List[int] = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-
 # What constitutes a 'long' button press?
-# 2 seconds?
 _LONG_BUTTON_PRESS_MS: int = 2_000
 
 # Configured I2C controller and its GPIO pins
@@ -77,27 +88,27 @@ _SCL: int = 17
 _I2C: I2C = I2C(id=_I2C_ID, scl=Pin(_SCL), sda=Pin(_SDA))
 
 # Find the LED displays (LTP305 devices) on 0x61, 0x62 or 0x63.
-# We must have two and the first becomes the left-hand pair of digits
-# (the hour) for the RA/Clock display.
-_RA_DISPLAY_H_ADDRESS: Optional[int] = None
-_RA_DISPLAY_M_ADDRESS: Optional[int] = None
+# We must have two. The first becomes the left-hand pair of digits
+# and the second becomes the right-hand pair.
+_DISPLAY_L_ADDRESS: Optional[int] = None
+_DISPLAY_R_ADDRESS: Optional[int] = None
 _DEVICE_ADDRESSES: List[int] = _I2C.scan()
 for device_address in _DEVICE_ADDRESSES:
     if device_address in [0x61, 0x62, 0x63]:
-        if not _RA_DISPLAY_H_ADDRESS:
-            # First goes to 'H'
-            _RA_DISPLAY_H_ADDRESS = device_address
-        elif not _RA_DISPLAY_M_ADDRESS:
-            # Second goes to 'M'
-            _RA_DISPLAY_M_ADDRESS = device_address
-    if _RA_DISPLAY_M_ADDRESS:
+        if not _DISPLAY_L_ADDRESS:
+            # First goes to 'Left'
+            _DISPLAY_L_ADDRESS = device_address
+        elif not _DISPLAY_R_ADDRESS:
+            # Second goes to 'Right'
+            _DISPLAY_R_ADDRESS = device_address
+    if _DISPLAY_R_ADDRESS:
         # We've set the 2nd device,
         # we can stop assigning
         break
-assert _RA_DISPLAY_H_ADDRESS
-assert _RA_DISPLAY_M_ADDRESS
-print(f'RA.h device={hex(_RA_DISPLAY_H_ADDRESS)}')
-print(f'RA.m device={hex(_RA_DISPLAY_M_ADDRESS)}')
+assert _DISPLAY_L_ADDRESS
+assert _DISPLAY_R_ADDRESS
+print(f'L display device={hex(_DISPLAY_L_ADDRESS)}')
+print(f'R display device={hex(_DISPLAY_R_ADDRESS)}')
 
 # Do we have a Real-Time Clock (at 0x62)?
 _RTC_ADDRESS: Optional[int] = None
@@ -133,6 +144,9 @@ _BUTTON_2: Pin = Pin(12, Pin.IN)
 _BUTTON_3: Pin = Pin(13, Pin.IN)
 _BUTTON_4: Pin = Pin(14, Pin.IN)
 
+# The Pico on-board LED
+_ONBOARD_LED: Pin = Pin(25, Pin.OUT)
+
 # The period of time to sit in the
 # button callback checking the button state.
 # A simple form of debounce.
@@ -157,6 +171,11 @@ for month_name in _MONTH_NAME:
 _CUMULATIVE_DAYS: Dict[bool, List[int]] = {
     False: [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365],
     True: [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366]}
+
+# Maximum days in a month (ignoring leap years)
+# First entry (index 0) is invalid.
+# Month index is 1-based (January = 1)
+_DAYS: List[int] = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 
 def leap_year(year: int) -> bool:
@@ -217,8 +236,10 @@ class RTC:
         self._pimoroni_i2c: PimoroniI2C = PimoroniI2C(sda=_SDA, scl=_SCL)
         self._rtc: BreakoutRTC = BreakoutRTC(self._pimoroni_i2c)
         # Setting backup switchover mode to '3'
-        # switches to battery when supply drops out.
+        # means the device will switch to battery
+        # when the power supply drops out.
         self._rtc.set_backup_switchover_mode(3)
+        # And set to 24 hour mode (essential)
         self._rtc.set_24_hour()
 
     def datetime(self, new_datetime: Optional[RealTimeClock] = None)\
@@ -229,7 +250,7 @@ class RTC:
             # Given a date-time,
             # so use it to set the RTC value.
             #
-            # We used a 1-based day of the week,
+            # We use a 1-based day of the week,
             # the underlying RTC uses 0-based.
             assert new_datetime.dow > 0
             self._rtc.set_time(new_datetime.s, new_datetime.m, new_datetime.h,
@@ -263,9 +284,9 @@ class FRAM:
     """Driver for the FRAM breakout.
     """
 
-    def __init__(self, i2c, address: int = 0x50):
+    def __init__(self, i2c, address):
         """Create an instance for a devices at a given address.
-        We can have eight devices, from 0x50 - 0x57.
+        The device can reside at any of eight addresses, 0x50 - 0x57.
         """
         assert i2c
         assert address
@@ -510,52 +531,46 @@ class LTP305:
 
 class LTP305Pair:
     """A wrapper around two LTP305 objects to form a 4-character display.
-    Basically a clock, but given "[HH][mm]". The pair can also be used
-    to display the target RA, the current time, and the calibration date.
+    Basically a 4-character display used to display the compensated RA value,
+    target RA, the current time, and the calibration date.
     """
     
-    def __init__(self,
-                 i2c,
-                 rtc: RTC,
-                 address_h: int,
-                 address_m: int,
-                 brightness: int = _MIN_BRIGHTNESS):
-        """Initialises the RA object, given an i2c instance and optional
-        display addresses and brightness.
+    def __init__(self, i2c, rtc: RTC, address_l: int, address_r: int):
+        """Initialises the display pair object. Given an i2c instance,
+        an RTC object, left and right display addresses,
+        and an optional brightness.
         """
         assert i2c
         assert rtc
-        assert brightness >= _MIN_BRIGHTNESS
-        assert brightness <= _MAX_BRIGHTNESS
-        
+
         self._rtc = rtc
-        self._brightness: float = brightness / _MAX_BRIGHTNESS
+        self._brightness_f: float = _MIN_BRIGHTNESS / _MAX_BRIGHTNESS
         
-        self.h_matrix = LTP305(i2c,
-                               address=address_h,
-                               brightness=self._brightness)
-        self.m_matrix = LTP305(i2c,
-                               address=address_m,
-                               brightness=self._brightness)
+        self.l_matrix = LTP305(i2c,
+                               address=address_l,
+                               brightness=self._brightness_f)
+        self.r_matrix = LTP305(i2c,
+                               address=address_r,
+                               brightness=self._brightness_f)
         
     def set_brightness(self, brightness: int) -> None:
         assert brightness >= _MIN_BRIGHTNESS
         assert brightness <= _MAX_BRIGHTNESS
 
         # Remember this setting
-        self._brightness = brightness / _MAX_BRIGHTNESS
+        self._brightness_f = brightness / _MAX_BRIGHTNESS
 
-        self.h_matrix.set_brightness(self._brightness, True)
-        self.m_matrix.set_brightness(self._brightness, True)
+        self.l_matrix.set_brightness(self._brightness_f, True)
+        self.r_matrix.set_brightness(self._brightness_f, True)
 
     def clear(self, left: bool = True, right: bool = True) -> None:
         if left:
-            self.h_matrix.clear()
-            self.h_matrix.show()
+            self.l_matrix.clear()
+            self.l_matrix.show()
 
         if right:
-            self.m_matrix.clear()    
-            self.m_matrix.show()
+            self.r_matrix.clear()
+            self.r_matrix.show()
 
     def show_ra(self, ra_target: RA, calibration_date: CalibrationDate)\
             -> None:
@@ -672,14 +687,14 @@ class LTP305Pair:
 
         # Hour [HH] (leading zero replaced by ' ')
         if value[0] == '0':
-            self.h_matrix.set_pair(' ' + value[1:2])
+            self.l_matrix.set_pair(' ' + value[1:2])
         else:
-            self.h_matrix.set_pair(value[:2])
+            self.l_matrix.set_pair(value[:2])
         # Minute [MM]
-        self.m_matrix.set_pair(value[2:])
+        self.r_matrix.set_pair(value[2:])
 
-        self.h_matrix.show()
-        self.m_matrix.show()
+        self.l_matrix.show()
+        self.r_matrix.show()
 
 
 class RaFRAM:
@@ -726,6 +741,8 @@ class RaFRAM:
     _OFFSET_CALIBRATION_DATE: int = 5  # 2 bytes
 
     def __init__(self, fram):
+        assert fram
+
         # Save the FRAM reference
         self._fram = fram
         
@@ -1028,17 +1045,10 @@ def tick(timer):
     _COMMAND_QUEUE.put(_CMD_TICK)
 
 
-# Create RTC object and the RA display object
-# (using our real-time clock class)
-_RTC: RTC = RTC()
-_RA_DISPLAY: LTP305Pair =\
-    LTP305Pair(_I2C, _RTC, _RA_DISPLAY_H_ADDRESS, _RA_DISPLAY_M_ADDRESS)
-
-
 class StateMachine:
     """The application state machine.
     """
-    # The states
+    # The individual states
     S_IDLE: int = 0
     S_DISPLAY_RA: int = 1
     S_DISPLAY_RA_TARGET: int = 2
@@ -1050,6 +1060,8 @@ class StateMachine:
     S_PROGRAM_C_DAY: int = 8
     S_PROGRAM_C_MONTH: int = 9
 
+    # Timer period (milliseconds).
+    # When it's enabled a _CMD_TICK command is issued at this rate.
     TIMER_PERIOD_MS: int = 500
     # Number of timer ticks to hold the display before returning to idle
     # (8 is 4 seconds when the timer is 500mS)
@@ -1063,18 +1075,21 @@ class StateMachine:
         # The current state
         self._state: int = StateMachine.S_IDLE
         # A countdown timer.
-        # The timer takes this down to zero.
-        # When it reaches zero the display is cleared (mode returns to IDLE)
+        # Each _CMD_TICK command decrements this value until it reaches zero.
+        # When it reaches zero the display is cleared (state returns to IDLE).
         self._to_idle_countdown: int = 0
-        # The RA display and FRAM
+        # The display, FRAM and RTC
         self._display: LTP305Pair = display
         self._ra_fram: RaFRAM = ra_fram
         self._rtc: RTC = rtc
-        # Brightness
+        # Read brightness, RA target and calibration date from
+        # the FRAM. Defaults will be used if written values are not found.
         self._brightness: int = self._ra_fram.read_brightness()
         self._ra_target: RA = self._ra_fram.read_ra_target()
         self._calibration_date: CalibrationDate =\
             self._ra_fram.read_calibration_date()
+
+        # Set the display's initial brightness
         self._display.set_brightness(self._brightness)
         
         # A Timer object.
@@ -1084,7 +1099,7 @@ class StateMachine:
         # we just enable and disable it.
         self._timer: Optional[Timer] = None
         
-        # Program mode indication.
+        # Program mode variables.
         # When in program mode the display flashes.
         # Whether the left, right or left and right displays flash
         # will depend on the state we're in.
@@ -1092,13 +1107,15 @@ class StateMachine:
         self._programming_left: bool = False
         self._programming_right: bool = False
         # The state that's being programmed.
-        # We use this to return to remember which state to return to
-        # when programming is finished or cancelled.
         self._programming_state: int = StateMachine.S_IDLE
         # Current visibility of left and right digit-pair
+        # These values toggled and use to flash the appropriate character pair
+        # on each timer tick depending on the value of
+        # _programming_left or _programming_right.
         self._programming_left_on: bool = False
         self._programming_right_on: bool = False
-        # The value to present to the display when programming.
+        # The 4-character string value to present to the display
+        # when programming.
         self._programming_value: Optional[str] = None
 
     def _clear_program_mode(self) -> None:
@@ -1632,24 +1649,33 @@ class StateMachine:
         return True
 
 
-# Main ------------------------------------------------------------------------
+# Global objects
 
-if __name__ == '__main__':
+# Our RTC object (RV3028 wrapper).
+_RTC: RTC = RTC()
 
-    if _LIGHT_ONBOARD_LED:
-        # Switch on the on-board LED
-        _ONBOARD_LED.value(1)
-    
-    # Create the FRAM instance
-    _FRAM: FRAM = FRAM(_I2C, _FRAM_ADDRESS)
-    _RA_FRAM: RaFRAM = RaFRAM(_FRAM)
-    # Create the StateMachine instance
-    _STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM, _RTC)
-    # Command 'queue'
-    _COMMAND_QUEUE: CommandQueue = CommandQueue()
+# The LED display
+# (using our real-time clock class)
+_DISPLAY: LTP305Pair =\
+    LTP305Pair(_I2C, _RTC, _DISPLAY_L_ADDRESS, _DISPLAY_R_ADDRESS)
+
+# Create the FRAM and RaFRAM instance
+_FRAM: FRAM = FRAM(_I2C, _FRAM_ADDRESS)
+_RA_FRAM: RaFRAM = RaFRAM(_FRAM)
+
+# Create the StateMachine instance
+_STATE_MACHINE: StateMachine = StateMachine(_DISPLAY, _RA_FRAM, _RTC)
+# Command 'queue'
+_COMMAND_QUEUE: CommandQueue = CommandQueue()
+
+
+def main() -> NoReturn:
+    """The main application entrypoint - main.
+    Called when _RUN is True and not expected to return.
+    """
     # Inject an automatic 'button-1' command into the command-queue
-    # (puts the display on) and then wait for others,
-    # leaving if the state machine fails
+    # which puts the display on when the application starts,
+    # showing the current compensated RA value.
     _COMMAND_QUEUE.put(_CMD_BUTTON_1)
 
     # Attach button clicks to callbacks
@@ -1675,3 +1701,15 @@ if __name__ == '__main__':
 
     # Reset the state machine...
     _STATE_MACHINE.reset()
+
+
+# Main ------------------------------------------------------------------------
+
+if __name__ == '__main__':
+
+    if _LIGHT_ONBOARD_LED:
+        # Switch on the on-board LED
+        _ONBOARD_LED.value(1)
+
+    if _RUN:
+        main()
