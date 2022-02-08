@@ -7,19 +7,21 @@
 #
 # We do not use the MicroPython built-in RTC class instead we
 # use the RV3028 I2C module and, before running the code for the first time
-# we need to set the initial time.
+# we need to set the initial time. The RV3028 is extremly low power (45nA at 3V)
+# and is facyory calibrated to +/-1ppm at 25 degrees
+# (a drift of 1 minute every 23 months).
 #
-# You can check the current RTC date and time with: -
+# You can get the current RTC date and time with: -
 #
 #    _RTC.datetime()
 #
 # To set time and date to "14:46:25 7-Feb-22", a Monday,
-# which is day 1 at the application level, day 0 in the RTC module: -
+# which is day 1 at our application level, day 0 in the RV3028: -
 #
 #    _RTC.datetime(RealTimeClock(2022, 2, 7, 1, 14, 46, 25))
 #
-# If you haven't set the RTC you should set the _RUN variable
-# in this module to False. This can then be loaded (by something like Thonny)
+# If you haven't set the RTC you can use our RTC class by setting the _RUN
+# variable to False. This code can then be loaded (by something like Thonny)
 # and you'll have access to the objects described above to clear the FRAM
 # and set the date and time.
 
@@ -48,7 +50,7 @@ _RUN: bool = True
 
 # Do we light the onboard LED when we start?
 # This action occurs regardless of the _RUN value.
-_LIGHT_ONBOARD_LED: bool = False
+_LIGHT_ONBOARD_LED: bool = True
 
 # An RA value: hours and minutes.
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
@@ -296,8 +298,6 @@ class FRAM:
         self._i2c = i2c
         self._address = address
 
-        print(f' FRAM initialised({hex(self._address)})')
-
     def write_byte(self, offset: int, byte_value: int) -> bool:
         """Writes a single value (expected to be a byte).
         Our implementation assumes the value is +ve (including zero),
@@ -308,9 +308,6 @@ class FRAM:
         assert offset < 32_768
         assert byte_value >= 0
         assert byte_value < 128
-
-        print(f' FRAM write_byte({offset}, {byte_value})' +
-              f' [{hex(self._address)}]')
 
         num_ack = self._i2c.writeto(self._address,
                                     bytes([offset >> 8,
@@ -330,8 +327,6 @@ class FRAM:
         assert offset >= 0
         assert offset < 32_768
 
-        print(f' FRAM read_byte({offset}) [{hex(self._address)}]')
-
         num_acks = self._i2c.writeto(self._address,
                                      bytes([offset >> 8, offset & 0xff]))
         assert num_acks == 2
@@ -339,7 +334,6 @@ class FRAM:
         assert got
 
         int_got: int = int.from_bytes(got, 'big')
-        print(f' FRAM read_byte {int_got}')
         return int_got
 
 
@@ -758,7 +752,6 @@ class RaFRAM:
         # Set marker to invalid
         # Write value (or values)
         # Set marker to valid
-        print(f'RA_FRAM Write {value} @{offset}')
         self._fram.write_byte(offset, RaFRAM._INVALID)
         if isinstance(value, int):
             assert value >= 0
@@ -783,7 +776,6 @@ class RaFRAM:
         assert offset + 1 < 32_768
         
         value: int = self._fram.read_byte(offset + 1)
-        print(f'RA_FRAM Read {value} @ {hex(offset)}')
         assert value >= 0
 
         return value
@@ -800,7 +792,6 @@ class RaFRAM:
         value: List[int] = []
         for value_offset in range(length):
             value.append(self._fram.read_byte(offset + 1 + value_offset))
-        print(f'RA_FRAM Read {value} @ {hex(offset)}')
         assert len(value) == length
 
         return value
@@ -810,13 +801,10 @@ class RaFRAM:
         
         byte_value: int = self._fram.read_byte(offset)
         value: bool = byte_value == RaFRAM._VALID
-        print(f'RA_FRAM IsValid @{hex(offset)} [{byte_value}] {value}')
 
         return value
         
     def read_brightness(self) -> int:
-
-        print('RA_FRAM read_brightness()...')
 
         # Return the cached (last written) value if we have it
         if self._brightness:
@@ -836,8 +824,6 @@ class RaFRAM:
         assert brightness >= _MIN_BRIGHTNESS
         assert brightness <= _MAX_BRIGHTNESS
         
-        print(f'RA_FRAM write_brightness({brightness})...')
-
         # Write to FRAM
         self._write_value(RaFRAM._OFFSET_BRIGHTNESS, brightness)
 
@@ -846,8 +832,6 @@ class RaFRAM:
     
     def read_ra_target(self) -> RA:
 
-        print('RA_FRAM read_ra_target()...')
-        
         # Return the cached (last written) value if we have it
         if self._ra_target:
             return self._ra_target
@@ -865,8 +849,6 @@ class RaFRAM:
     def write_ra_target(self, ra_target: RA) -> None:
         assert ra_target
 
-        print(f'RA_FRAM write_ra_target({ra_target})...')
-
         # Write to FRAM
         values: List[int] = [ra_target.h, ra_target.m]
         self._write_value(RaFRAM._OFFSET_RA_TARGET, values)
@@ -875,8 +857,6 @@ class RaFRAM:
         self._ra_target = ra_target
     
     def read_calibration_date(self) -> CalibrationDate:
-
-        print('RA_FRAM read_calibration_date()...')
 
         # Return the cached (last written) value if we have it
         if self._calibration_date:
@@ -897,8 +877,6 @@ class RaFRAM:
             -> None:
         assert calibration_date
 
-        print(f'RA_FRAM write_calibration_date({calibration_date})...')
-
         # Write to FRAN
         values: List[int] = [calibration_date.d, calibration_date.m]
         self._write_value(RaFRAM._OFFSET_CALIBRATION_DATE, values)
@@ -909,8 +887,6 @@ class RaFRAM:
     def clear(self):
         """Clears, invalidates, the RA FRAM values.
         """
-        print('RA_FRAM clear()...')
-
         self._fram.write_byte(RaFRAM._OFFSET_BRIGHTNESS, RaFRAM._INVALID)
         self._fram.write_byte(RaFRAM._OFFSET_RA_TARGET, RaFRAM._INVALID)
         self._fram.write_byte(RaFRAM._OFFSET_CALIBRATION_DATE, RaFRAM._INVALID)
@@ -1384,9 +1360,7 @@ class StateMachine:
                     rtc.h = hour
                     rtc.m = minute
                     rtc.s = 0
-                    print(f'Setting datetime({rtc})..')
                     rtc_result = self._rtc.datetime(rtc)
-                    print(f'Setting RTC result={rtc_result}')
                     # And then move to displaying the clock
                     return self._to_display_clock()
 
@@ -1455,7 +1429,6 @@ class StateMachine:
     def _to_idle(self) -> bool:
         """Actions on entry to the IDLE state.
         """
-        print('_to_idle()')
         
         # Always clear any programming
         self._clear_program_mode()
@@ -1471,7 +1444,6 @@ class StateMachine:
     def _to_display_ra(self) -> bool:
         """Actions on entry to the DISPLAY_RA state.
         """
-        print('_to_display_ra()')
         
         # Always clear any programming
         self._clear_program_mode()
@@ -1487,7 +1459,6 @@ class StateMachine:
     def _to_display_ra_target(self) -> bool:
         """Actions on entry to the DISPLAY_RA_TARGET state.
         """
-        print('_to_display_ra_target()')
         
         # Always clear any programming
         self._clear_program_mode()
@@ -1503,7 +1474,6 @@ class StateMachine:
     def _to_display_clock(self) -> bool:
         """Actions on entry to the DISPLAY_CLOCK state.
         """
-        print('_to_display_clock()')
         
         # Always clear any programming
         self._clear_program_mode()
@@ -1519,7 +1489,6 @@ class StateMachine:
     def _to_display_calibration_date(self) -> bool:
         """Actions on entry to the DISPLAY_TIME state.
         """
-        print('_to_display_calibration_date()')
         
         # Always clear any programming
         self._clear_program_mode()
@@ -1534,8 +1503,6 @@ class StateMachine:
 
     def _to_program_ra_target_h(self) -> bool:
         
-        print('_to_program_ra_target_h()')
-
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_RA_TARGET_H
         
@@ -1564,8 +1531,6 @@ class StateMachine:
 
     def _to_program_ra_target_m(self) -> bool:
         
-        print('_to_program_ra_target_m()')
-
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_RA_TARGET_M
         
@@ -1577,8 +1542,6 @@ class StateMachine:
 
     def _to_program_clock(self) -> bool:
         
-        print('_to_program_clock()')
-
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_CLOCK
         
@@ -1607,8 +1570,6 @@ class StateMachine:
 
     def _to_program_calibration_day(self) -> bool:
         
-        print('_to_program_calibration_day()')
-
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_C_DAY
         
@@ -1637,8 +1598,6 @@ class StateMachine:
 
     def _to_program_calibration_month(self) -> bool:
         
-        print('_to_program_calibration_month()')
-
         # Always set the new state
         self._state = StateMachine.S_PROGRAM_C_MONTH
         
@@ -1701,6 +1660,12 @@ def main() -> NoReturn:
 
     # Reset the state machine...
     _STATE_MACHINE.reset()
+
+    # Detach button callbacks
+    _BUTTON_1.irq()
+    _BUTTON_2.irq()
+    _BUTTON_3.irq()
+    _BUTTON_4.irq()
 
 
 # Main ------------------------------------------------------------------------

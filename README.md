@@ -29,7 +29,16 @@ provides seating for all the devices and some handy buttons: -
 
 ---
 
+- [FRAM data sheet] (Memory) (PDF)
+- [LTP305 data sheet] (LED display) (PDF)
+- [RV3028 application manual] (RTC) (PDF)
+
+---
+
+[rv3028 application manual]: https://www.microcrystal.com/fileadmin/Media/Products/RTC/App.Manual/RV-3028-C7_App-Manual.pdf
 [dot-matrix]: https://shop.pimoroni.com/products/led-dot-matrix-breakout?variant=32274405621843
 [fram]: https://shop.pimoroni.com/products/adafruit-i2c-non-volatile-fram-breakout-256kbit-32kbyte
+[fram data sheet]: https://www.fujitsu.com/uk/Images/MB85RC256V-20171207.pdf
+[ltp305 data sheet]: https://optoelectronics.liteon.com/upload/download/DS-30-97-087/LTP-305HR.pdf
 [pico]: https://shop.pimoroni.com/products/raspberry-pi-pico?variant=32402092294227
 [real-time clock]: https://shop.pimoroni.com/products/rv3028-real-time-clock-rtc-breakout
