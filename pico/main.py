@@ -13,6 +13,14 @@ from breakout_rtc import BreakoutRTC  # type: ignore
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
 
+# _RUN
+#
+# Setting this to False will avoid running the application.
+# Setting to False is useful because you get all the
+# global objects and can manually configure/erase the FRAM
+# and set the RTC module.
+_RUN: bool = True
+
 # An RA value: hours and minutes.
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
 # A Calibration Date: day, month
@@ -41,9 +49,6 @@ _DAY_MINUTES: int = 1_440
 
 # What constitutes a 'long' button press?
 _LONG_BUTTON_PRESS_MS: int = 2_000
-
-# The Pico on-board LED
-_ONBOARD_LED: Pin = Pin(25, Pin.OUT)
 
 # The period of time to sit in the
 # button callback checking the button state.
@@ -885,6 +890,7 @@ _CMD_BUTTON_2: int = 2          # Button 2 has been pressed
 _CMD_BUTTON_2_LONG: int = 22    # Button 2 has been pressed for a long time
 _CMD_BUTTON_3: int = 3          # Button 3 has been pressed
 _CMD_BUTTON_4: int = 4          # Button 4 has been pressed
+_CMD_BUTTON_4_LONG: int = 44    # Button 4 has been pressed for a long time
 _CMD_TICK: int = 10             # The timer has fired
 
 
@@ -924,8 +930,8 @@ def btn_2(pin: Pin) -> None:
     pin.irq(handler=None)
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     # Measure the time pressed.
-    # Less than 3 seconds we insert a _CMD_BUTTON_2 command,
-    # for 3 seconds or more it's a _CMD_BUTTON_2_LONG command.
+    # Short, we insert a _CMD_BUTTON_2 command,
+    # Long, we insert a _CMD_BUTTON_2_LONG command.
     if pin.value():
         down_ms: int = time.ticks_ms()  # type: ignore
         depressed: bool = True
@@ -967,8 +973,22 @@ def btn_4(pin: Pin) -> None:
 
     pin.irq(handler=None)
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
+    # Measure the time pressed.
+    # Short, we insert a _CMD_BUTTON_4 command,
+    # Long, we insert a _CMD_BUTTON_4_LONG command.
     if pin.value():
-        _COMMAND_QUEUE.put(_CMD_BUTTON_4)
+        down_ms: int = time.ticks_ms()  # type: ignore
+        depressed: bool = True
+        while depressed:
+            time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
+            if not pin.value():
+                depressed = False
+        up_ms: int = time.ticks_ms()  # type: ignore
+        duration: int = time.ticks_diff(up_ms, down_ms)  # type: ignore
+        if duration >= _LONG_BUTTON_PRESS_MS:
+            _COMMAND_QUEUE.put(_CMD_BUTTON_4_LONG)
+        else:
+            _COMMAND_QUEUE.put(_CMD_BUTTON_4)
     pin.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
 
@@ -1188,6 +1208,11 @@ class StateMachine:
         """Process a command, where the actions depend on the
         current 'state'.
         """
+
+        if command == _CMD_BUTTON_4_LONG:
+            # A 'kill' command,
+            # Returning False means the app will stop.
+            return False
 
         if command == _CMD_TICK:
             # Internal TICK (500mS)
@@ -1587,42 +1612,62 @@ _COMMAND_QUEUE: CommandQueue = CommandQueue()
 
 
 def main() -> NoReturn:
-    """The main application entrypoint - main.
+    """The main application entrypoint.
     Called when _RUN is True and not expected to return.
     """
-
-    # Onboard LED off...
-    _ONBOARD_LED.value(1)
 
     _BUTTON_1.irq(trigger=Pin.IRQ_RISING, handler=btn_1)
     _BUTTON_2.irq(trigger=Pin.IRQ_RISING, handler=btn_2)
     _BUTTON_3.irq(trigger=Pin.IRQ_RISING, handler=btn_3)
     _BUTTON_4.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
-    print('Waiting for button...')
+    # App's starting.
+    # Prompt user they need to press a button
+    # to start the app.
+    _DISPLAY.show(' Any')
 
     # What for user to press the button before extinguishing the LED
     button_hit: bool = False
     while not button_hit:
-        if _COMMAND_QUEUE.get() == _CMD_BUTTON_1:
+        if _COMMAND_QUEUE.get() is not None:
             button_hit = True
         else:
             time.sleep(1)
 
-    print('Pressed!')
-
-    # Onboard LED off...
-    _ONBOARD_LED.value(0)
-
     _DISPLAY.show('o   ')
-    time.sleep(1)
+    time.sleep_ms(500)
     _DISPLAY.show(' o  ')
-    time.sleep(1)
+    time.sleep_ms(500)
     _DISPLAY.show('  o ')
-    time.sleep(1)
+    time.sleep_ms(500)
     _DISPLAY.show('   o')
-    time.sleep(1)
-    _DISPLAY.show('Done')
+    time.sleep_ms(500)
+    _DISPLAY.show('    ')
+
+    # Starting,
+    # force initial display if compensated RA value...
+    _COMMAND_QUEUE.put(_CMD_BUTTON_1)
+
+    # Main loop
+    while True:
+
+        # Wait for a command
+        cmd: Optional[int] = _COMMAND_QUEUE.get()
+        while cmd is None:
+            time.sleep_ms(250)  # type: ignore
+            cmd = _COMMAND_QUEUE.get()
+
+        assert cmd
+        result: bool = False
+        try:
+            result = _STATE_MACHINE.process_command(cmd)
+        except Exception as ex:
+            print(f'StateMachine Exception "{ex}"')
+        if not result:
+            print('Got failure from StateMachine. Leaving.')
+            break
+
+    _DISPLAY.show('Exit')
 
     # Reset the state machine...
     _STATE_MACHINE.reset()
@@ -1633,9 +1678,12 @@ def main() -> NoReturn:
     _BUTTON_3.irq()
     _BUTTON_4.irq()
 
+    _DISPLAY.show('Done')
+
 
 # Main ------------------------------------------------------------------------
 
 if __name__ == '__main__':
 
-    main()
+    if _RUN:
+        main()
