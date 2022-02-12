@@ -1566,6 +1566,22 @@ class StateMachine:
         return True
 
 
+# Global Objects
+
+# Our RTC object (RV3028 wrapper).
+_RTC: RaRTC = RaRTC()
+
+# The LED display
+# (using our real-time clock class)
+_DISPLAY: LTP305Pair =\
+    LTP305Pair(_I2C, _RTC, _DISPLAY_L_ADDRESS, _DISPLAY_R_ADDRESS)
+
+# Create the FRAM and RaFRAM instance
+_FRAM: BaseFRAM = BaseFRAM(_I2C, _FRAM_ADDRESS)
+_RA_FRAM: RaFRAM = RaFRAM(_FRAM)
+
+# Create the StateMachine instance
+_STATE_MACHINE: StateMachine = StateMachine(_DISPLAY, _RA_FRAM, _RTC)
 # Command 'queue'
 _COMMAND_QUEUE: CommandQueue = CommandQueue()
 
@@ -1577,7 +1593,11 @@ def main() -> NoReturn:
 
     # Onboard LED off...
     _ONBOARD_LED.value(1)
+
     _BUTTON_1.irq(trigger=Pin.IRQ_RISING, handler=btn_1)
+    _BUTTON_2.irq(trigger=Pin.IRQ_RISING, handler=btn_2)
+    _BUTTON_3.irq(trigger=Pin.IRQ_RISING, handler=btn_3)
+    _BUTTON_4.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
     print('Waiting for button...')
 
@@ -1593,6 +1613,25 @@ def main() -> NoReturn:
 
     # Onboard LED off...
     _ONBOARD_LED.value(0)
+
+    _DISPLAY.show('o   ')
+    time.sleep(1)
+    _DISPLAY.show(' o  ')
+    time.sleep(1)
+    _DISPLAY.show('  o ')
+    time.sleep(1)
+    _DISPLAY.show('   o')
+    time.sleep(1)
+    _DISPLAY.show('Done')
+
+    # Reset the state machine...
+    _STATE_MACHINE.reset()
+
+    # Detach button callbacks
+    _BUTTON_1.irq()
+    _BUTTON_2.irq()
+    _BUTTON_3.irq()
+    _BUTTON_4.irq()
 
 
 # Main ------------------------------------------------------------------------
