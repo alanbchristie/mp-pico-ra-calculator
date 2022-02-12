@@ -6,9 +6,39 @@ except ImportError:
 
 import micropython  # type: ignore
 from machine import I2C, Pin  # type: ignore
+from ucollections import namedtuple  # type: ignore
 
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
+
+# An RA value: hours and minutes.
+RA: namedtuple = namedtuple('RA', ('h', 'm'))
+# A Calibration Date: day, month
+CalibrationDate: namedtuple = namedtuple('CalibrationDate', ('d', 'm'))
+# A Real-Time Clock value
+# Year is full year, e.g. 2022
+RealTimeClock: namedtuple = namedtuple('RealTimeCLock', ('year',
+                                                         'month',
+                                                         'dom',
+                                                         'dow',
+                                                         'h',
+                                                         'm',
+                                                         's'))
+
+# The target RA (Capella, the brightest star in the constellation of Auriga).
+# This is the Right Ascension of the default target object.
+DEFAULT_RA_TARGET: RA = RA(5, 16)
+
+# The date the telescope's RA axis was calibrated.
+# We don't need the calibrated RA axis value, just the day and month
+# (where 1==January) it was calibrated.
+DEFAULT_CALIBRATION_DATE: CalibrationDate = CalibrationDate(3, 1)
+
+# Minutes in one day
+_DAY_MINUTES: int = 1_440
+
+# What constitutes a 'long' button press?
+_LONG_BUTTON_PRESS_MS: int = 2_000
 
 # The Pico on-board LED
 _ONBOARD_LED: Pin = Pin(25, Pin.OUT)
@@ -200,6 +230,16 @@ def btn_4(pin: Pin) -> None:
     if pin.value():
         _COMMAND_QUEUE.put(_CMD_BUTTON_4)
     pin.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
+
+
+def tick(timer):
+    """A timer callback. Creates the _CMD_TICK command.
+
+    Enabled only when display is on.
+    """
+    assert timer
+
+    _COMMAND_QUEUE.put(_CMD_TICK)
 
 
 # Command 'queue'
