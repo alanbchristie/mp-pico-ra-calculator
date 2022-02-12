@@ -1002,11 +1002,15 @@ def btn_3(pin: Pin) -> None:
 
 
 def btn_4(pin: Pin) -> None:
-    """The **UP** button. Creates the _CMD_BUTTON_4 command.
+    """The **UP** button. Creates the _CMD_BUTTON_4 and _CMD_BUTTON_4_LONG
+    commands
 
     Pressing this when the display is on increases
     the display brightness. In programming mode it increases the value that
     is flashing.
+
+    A long press (programming or not) will result in a trigger
+    for the state machine toi exit.
     """
 
     pin.irq(handler=None)
@@ -1660,6 +1664,12 @@ _COMMAND_QUEUE: CommandQueue = CommandQueue()
 def main() -> NoReturn:
     """The main application entrypoint.
     Called when _RUN is True and not expected to return.
+
+    Here we spin the display (just to show the user we've started)
+    and then sit in a loop waiting for a command (button-press or timer)
+    passing each to the state machine that controls the display.
+
+    The user can exit the main loop with a 'long' press of button 4 (UP).
     """
 
     _BUTTON_1.irq(trigger=Pin.IRQ_RISING, handler=btn_1)
