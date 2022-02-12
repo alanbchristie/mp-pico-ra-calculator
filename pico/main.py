@@ -14,6 +14,7 @@ try:
 except ImportError:
     pass
 
+# pylint: disable=import-error
 import micropython  # type: ignore
 from machine import I2C, Pin, Timer  # type: ignore
 from ucollections import namedtuple  # type: ignore
@@ -1394,7 +1395,7 @@ class StateMachine:
                     rtc.h = hour
                     rtc.m = minute
                     rtc.s = 0
-                    rtc_result = self._rtc.datetime(rtc)
+                    _ = self._rtc.datetime(rtc)
                     # And then move to displaying the clock
                     return self._to_display_clock()
 
