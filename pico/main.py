@@ -20,7 +20,8 @@ from breakout_rtc import BreakoutRTC  # type: ignore
 # and set the RTC module.
 #
 # If the application is running you can press and hold the "UP" button
-# (button 4) for a long-press to cause the application to stop.
+# (button 4) for a long-press to cause the application to stop,
+
 _RUN: bool = True
 
 # To erase our section of the FRAM run: -
@@ -1212,6 +1213,14 @@ class StateMachine:
             if hour < 0:
                 hour = 23
             self._programming_value = f'{hour:2d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
+            # Adjust the minutes only
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
+            minute -= 1
+            if minute < 0:
+                minute = 59
+            self._programming_value = f'{hour:02d}{minute:02d}'
         elif self._state == StateMachine.S_PROGRAM_C_MONTH:
             # Adjust the month only
             day: int = int(self._programming_value[:2])
