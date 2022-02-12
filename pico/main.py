@@ -113,6 +113,687 @@ _BUTTON_2: Pin = Pin(12, Pin.IN)
 _BUTTON_3: Pin = Pin(13, Pin.IN)
 _BUTTON_4: Pin = Pin(14, Pin.IN)
 
+# A list of 2-letter month names
+# Get name with simple lookup _MONTH_NAME[month_no]
+# Get numerical value from string with _MONTH_NAME.index(month_str)
+_MONTH_NAME: List[str] = ['xx',  # Invalid (index = 0)
+                          'Ja', 'Fe', 'Mc', 'Ap', 'Ma', 'Jn',
+                          'Ju', 'Au', 'Se', 'Oc', 'No', 'De']
+# Must have 13 entries (i.e. 12 plus dummy entry for month 0)
+# and every value must contain 2 letters
+assert len(_MONTH_NAME) == 13
+for month_name in _MONTH_NAME:
+    assert len(month_name) == 2
+    assert month_name[0].isalpha()
+    assert month_name[1].isalpha()
+
+# A map of cumulative Days by month.
+# Index is True for leap-year.
+_CUMULATIVE_DAYS: Dict[bool, List[int]] = {
+    False: [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365],
+    True: [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366]}
+
+# Maximum days in a month (ignoring leap years)
+# First entry (index 0) is invalid.
+# Month index is 1-based (January = 1)
+_DAYS: List[int] = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+
+def leap_year(year: int) -> bool:
+    """Returns True of the given year is a leap year.
+    """
+    return year % 4 == 0 and year % 100 != 0 or year % 400 == 0
+
+
+def days_since_calibration(c_day: int, c_month: int,
+                           now_day: int, now_month: int, now_year: int)\
+        -> int:
+    """Returns the number of days since calibration. If calibration day was
+    yesterday '1' is returned. If it's the calibration day, '0' is returned.
+    The maximum returned value is 365 (when we span a leap-year).
+    At other times the maximum returned value is 364.
+    """
+    # Is it calibration day?
+    if c_month == now_month and c_day == now_day:
+        return 0
+
+    # What's the offset today?
+    # It's the day, plus the cumulative days
+    # to the start of the current month, compensating for leap-year...
+    now_offset: int = now_day +\
+        _CUMULATIVE_DAYS[leap_year(now_year)][now_month - 1]
+
+    # Does it look like now is before the calibration date?
+    # If so we assume calibration was last year -
+    # the calibration date cannot be n the future!
+    if now_month < c_month or now_month == c_month and now_day < c_day:
+        # Calibration year must have been last year.
+        c_offset: int = c_day +\
+            _CUMULATIVE_DAYS[leap_year(now_year - 1)][c_month - 1]
+        # Now we know calibration was last year,
+        # add all the days from last year to today
+        # Cumulate days to end of december last year...
+        now_offset += _CUMULATIVE_DAYS[leap_year(now_year - 1)][12]
+    else:
+        # Calibration is the current year
+        c_offset = c_day
+        if c_month > 1:
+            c_offset += _CUMULATIVE_DAYS[leap_year(now_year)][c_month - 1]
+
+    assert now_offset > c_offset
+    return now_offset - c_offset
+
+
+class FRAM:
+    """Driver for the FRAM breakout.
+    """
+
+    def __init__(self, i2c, address):
+        """Create an instance for a devices at a given address.
+        The device can reside at any of eight addresses, 0x50 - 0x57.
+        """
+        assert i2c
+        assert address
+        assert address >= 0x50
+        assert address <= 0x57
+
+        self._i2c = i2c
+        self._address = address
+
+    def write_byte(self, offset: int, byte_value: int) -> bool:
+        """Writes a single value (expected to be a byte).
+        Our implementation assumes the value is +ve (including zero),
+        e.g. 0..127.
+        """
+        # Max offset is 32K
+        assert offset >= 0
+        assert offset < 32_768
+        assert byte_value >= 0
+        assert byte_value < 128
+
+        num_ack = self._i2c.writeto(self._address,
+                                    bytes([offset >> 8,
+                                           offset & 0xff,
+                                           byte_value]))
+        if num_ack != 3:
+            print(f'Failed to write to FRAM at {self._address}.' +
+                  f' num_ack={num_ack}, expected 3')
+
+        return num_ack != 3
+
+    def read_byte(self, offset) -> int:
+        """Reads a single byte, assumed to be in the range 0-127,
+        returning it as an int.
+        """
+        # Max offset is 32K
+        assert offset >= 0
+        assert offset < 32_768
+
+        num_acks = self._i2c.writeto(self._address,
+                                     bytes([offset >> 8, offset & 0xff]))
+        assert num_acks == 2
+        got = self._i2c.readfrom(self._address, 1)
+        assert got
+
+        int_got: int = int.from_bytes(got, 'big')
+        return int_got
+
+
+class LTP305:
+    """A simple class to control a LTP305 in MicroPython on a Pico. Based on
+    Pimoroni's Raspberry Pi code at https://github.com/pimoroni/ltp305-python.
+    Instead of using the Pi i2c library (which we can't use on the Pico)
+    we use the MicroPython i2c library.
+
+    The displays can use i2c address 0x61-0x63.
+    """
+
+    # LTP305 bitmaps for key characters indexed by character ordinal.
+    # Digits, space and upper and lower-case letters.
+    font: Dict[int, List[int]] = {
+        32: [0x00, 0x00, 0x00, 0x00, 0x00],  # (space)
+
+        #        48: [0x3e, 0x51, 0x49, 0x45, 0x3e],  # 0
+        48: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
+        49: [0x00, 0x42, 0x7f, 0x40, 0x00],  # 1
+        50: [0x42, 0x61, 0x51, 0x49, 0x46],  # 2
+        51: [0x21, 0x41, 0x45, 0x4b, 0x31],  # 3
+        52: [0x18, 0x14, 0x12, 0x7f, 0x10],  # 4
+        53: [0x27, 0x45, 0x45, 0x45, 0x39],  # 5
+        54: [0x3c, 0x4a, 0x49, 0x49, 0x30],  # 6
+        55: [0x01, 0x71, 0x09, 0x05, 0x03],  # 7
+        56: [0x36, 0x49, 0x49, 0x49, 0x36],  # 8
+        57: [0x06, 0x49, 0x49, 0x29, 0x1e],  # 9
+
+        65: [0x7e, 0x11, 0x11, 0x11, 0x7e],  # A
+        66: [0x7f, 0x49, 0x49, 0x49, 0x36],  # B
+        67: [0x3e, 0x41, 0x41, 0x41, 0x22],  # C
+        68: [0x7f, 0x41, 0x41, 0x22, 0x1c],  # D
+        69: [0x7f, 0x49, 0x49, 0x49, 0x41],  # E
+        70: [0x7f, 0x09, 0x09, 0x01, 0x01],  # F
+        71: [0x3e, 0x41, 0x41, 0x51, 0x32],  # G
+        72: [0x7f, 0x08, 0x08, 0x08, 0x7f],  # H
+        73: [0x00, 0x41, 0x7f, 0x41, 0x00],  # I
+        74: [0x20, 0x40, 0x41, 0x3f, 0x01],  # J
+        75: [0x7f, 0x08, 0x14, 0x22, 0x41],  # K
+        76: [0x7f, 0x40, 0x40, 0x40, 0x40],  # L
+        77: [0x7f, 0x02, 0x04, 0x02, 0x7f],  # M
+        78: [0x7f, 0x04, 0x08, 0x10, 0x7f],  # N
+        79: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
+        80: [0x7f, 0x09, 0x09, 0x09, 0x06],  # P
+        81: [0x3e, 0x41, 0x51, 0x21, 0x5e],  # Q
+        82: [0x7f, 0x09, 0x19, 0x29, 0x46],  # R
+        83: [0x46, 0x49, 0x49, 0x49, 0x31],  # S
+        84: [0x01, 0x01, 0x7f, 0x01, 0x01],  # T
+        85: [0x3f, 0x40, 0x40, 0x40, 0x3f],  # U
+        86: [0x1f, 0x20, 0x40, 0x20, 0x1f],  # V
+        87: [0x7f, 0x20, 0x18, 0x20, 0x7f],  # W
+        88: [0x63, 0x14, 0x08, 0x14, 0x63],  # X
+        89: [0x03, 0x04, 0x78, 0x04, 0x03],  # Y
+        90: [0x61, 0x51, 0x49, 0x45, 0x43],  # Z
+
+        97: [0x20, 0x54, 0x54, 0x54, 0x78],  # a
+        98: [0x7f, 0x48, 0x44, 0x44, 0x38],  # b
+        99: [0x38, 0x44, 0x44, 0x44, 0x20],  # c
+        100: [0x38, 0x44, 0x44, 0x48, 0x7f],  # d
+        101: [0x38, 0x54, 0x54, 0x54, 0x18],  # e
+        102: [0x08, 0x7e, 0x09, 0x01, 0x02],  # f
+        103: [0x08, 0x14, 0x54, 0x54, 0x3c],  # g
+        104: [0x7f, 0x08, 0x04, 0x04, 0x78],  # h
+        105: [0x00, 0x44, 0x7d, 0x40, 0x00],  # i
+        106: [0x20, 0x40, 0x44, 0x3d, 0x00],  # j
+        107: [0x00, 0x7f, 0x10, 0x28, 0x44],  # k
+        108: [0x00, 0x41, 0x7f, 0x40, 0x00],  # l
+        109: [0x7c, 0x04, 0x18, 0x04, 0x78],  # m
+        110: [0x7c, 0x08, 0x04, 0x04, 0x78],  # n
+        111: [0x38, 0x44, 0x44, 0x44, 0x38],  # o
+        112: [0x7c, 0x14, 0x14, 0x14, 0x08],  # p
+        113: [0x08, 0x14, 0x14, 0x18, 0x7c],  # q
+        114: [0x7c, 0x08, 0x04, 0x04, 0x08],  # r
+        115: [0x48, 0x54, 0x54, 0x54, 0x20],  # s
+        116: [0x04, 0x3f, 0x44, 0x40, 0x20],  # t
+        117: [0x3c, 0x40, 0x40, 0x20, 0x7c],  # u
+        118: [0x1c, 0x20, 0x40, 0x20, 0x1c],  # v
+        119: [0x3c, 0x40, 0x30, 0x40, 0x3c],  # w
+        120: [0x44, 0x28, 0x10, 0x28, 0x44],  # x
+        121: [0x0c, 0x50, 0x50, 0x50, 0x3c],  # y
+        122: [0x44, 0x64, 0x54, 0x4c, 0x44],  # z
+    }
+
+    MODE = 0b00011000
+    OPTS = 0b00001110  # 1110 = 35mA, 0000 = 40mA
+    UPDATE = 0x01
+
+    CMD_BRIGHTNESS = 0x19
+    CMD_MODE = 0x00
+    CMD_UPDATE = 0x0C
+    CMD_OPTIONS = 0x0D
+
+    CMD_MATRIX_L = 0x0E
+    CMD_MATRIX_R = 0x01
+
+    def __init__(self, i2c, address: int = 0x61, brightness: float = 0.1):
+        assert i2c
+        assert address in [0x61, 0x62, 0x63]
+
+        self._bus = i2c
+        self._address: int = address
+        self._buf_matrix_left: List[int] = []
+        self._buf_matrix_right: List[int] = []
+        self._brightness: int = 0
+
+        self.set_brightness(brightness)
+        self.clear()
+
+    def clear(self) -> None:
+        """Clear both LED matrices.
+
+        Must call .show() to display changes.
+        """
+        self._buf_matrix_left = [0 for _ in range(8)]
+        self._buf_matrix_right = [0 for _ in range(8)]
+
+    def set_brightness(self, brightness: float, update: bool = False) -> None:
+        """Set brightness of both LED matrices (from 0.0 to 1.0).
+        """
+        assert brightness >= 0.0
+        assert brightness <= 1.0
+
+        _brightness = int(brightness * 127.0)
+        self._brightness = min(127, max(0, _brightness))
+        if update:
+            self._bus.writeto_mem(self._address,
+                                  LTP305.CMD_BRIGHTNESS,
+                                  self._brightness.to_bytes(1, 'big'))
+
+    def set_pixel(self, px: int, py: int, val: int) -> None:
+        """Set a single pixel on the matrix.
+        """
+        if px < 5:  # Left Matrix
+            if val:
+                self._buf_matrix_left[px] |= (0b1 << py)
+            else:
+                self._buf_matrix_left[px] &= ~(0b1 << py)
+        else:  # Right Matrix
+            px -= 5
+            if val:
+                self._buf_matrix_right[py] |= (0b1 << px)
+            else:
+                self._buf_matrix_right[py] &= ~(0b1 << px)
+
+    def set_pair(self, chars: str) -> None:
+        """Set a character pair.
+        """
+        assert isinstance(chars, str)
+        assert len(chars) == 2
+
+        self.set_character(0, chars[0])
+        self.set_character(5, chars[1])
+
+    def set_character(self, x: int, char: Union[int, str]) -> None:
+        """Set a single character.
+        """
+        if not isinstance(char, int):
+            assert isinstance(char, str)
+            char = ord(char)
+        pixel_data: List[int] = LTP305.font[char]
+        for px in range(5):
+            for py in range(8):
+                c = pixel_data[px] & (0b1 << py)
+                self.set_pixel(x + px, py, c)
+
+    def show(self) -> None:
+        """Update the LED matrix from the buffer.
+        """
+        self._bus.writeto_mem(self._address,
+                              LTP305.CMD_MATRIX_L,
+                              bytearray(self._buf_matrix_left))
+        self._bus.writeto_mem(self._address,
+                              LTP305.CMD_MATRIX_R,
+                              bytearray(self._buf_matrix_right))
+        self._bus.writeto_mem(self._address,
+                              LTP305.CMD_MODE,
+                              LTP305.MODE.to_bytes(1, 'big'))
+        self._bus.writeto_mem(self._address,
+                              LTP305.CMD_OPTIONS,
+                              LTP305.OPTS.to_bytes(1, 'big'))
+        self._bus.writeto_mem(self._address,
+                              LTP305.CMD_BRIGHTNESS,
+                              self._brightness.to_bytes(1, 'big'))
+        self._bus.writeto_mem(self._address,
+                              LTP305.CMD_UPDATE,
+                              LTP305.UPDATE.to_bytes(1, 'big'))
+
+
+class LTP305Pair:
+    """A wrapper around two LTP305 objects to form a 4-character display.
+    Basically a 4-character display used to display the compensated RA value,
+    target RA, the current time, and the calibration date.
+    """
+
+    def __init__(self, i2c, rtc: RTC, address_l: int, address_r: int):
+        """Initialises the display pair object. Given an i2c instance,
+        an RTC object, left and right display addresses,
+        and an optional brightness.
+        """
+        assert i2c
+        assert rtc
+
+        self._rtc = rtc
+        self._brightness_f: float = _MIN_BRIGHTNESS / _MAX_BRIGHTNESS
+
+        self.l_matrix = LTP305(i2c,
+                               address=address_l,
+                               brightness=self._brightness_f)
+        self.r_matrix = LTP305(i2c,
+                               address=address_r,
+                               brightness=self._brightness_f)
+
+    def set_brightness(self, brightness: int) -> None:
+        assert brightness >= _MIN_BRIGHTNESS
+        assert brightness <= _MAX_BRIGHTNESS
+
+        # Remember this setting
+        self._brightness_f = brightness / _MAX_BRIGHTNESS
+
+        self.l_matrix.set_brightness(self._brightness_f, True)
+        self.r_matrix.set_brightness(self._brightness_f, True)
+
+    def clear(self, left: bool = True, right: bool = True) -> None:
+        if left:
+            self.l_matrix.clear()
+            self.l_matrix.show()
+
+        if right:
+            self.r_matrix.clear()
+            self.r_matrix.show()
+
+    def show_ra(self, ra_target: RA, calibration_date: CalibrationDate) \
+            -> None:
+        """Uses the RTC to calculate the corrected RA value for the
+        given RA target value and its calibration date (with defaults).
+        """
+        assert ra_target
+        assert calibration_date
+
+        # Read the RTC
+        # We're given an 8-value tuple with the following content:
+        # (year, month, day, weekday, hours, minutes, seconds, sub-seconds)
+        rtc = self._rtc.datetime()
+        # We just need 'HH:MM', which we'll call 'clock'.
+        clock: str = f'{rtc[4]:02d}:{rtc[5]:02d}'
+
+        # Calculate the corrected RA.
+        #
+        # First, We add the current time to the target RA.
+        target_ra_minutes: int = ra_target.h * 60 + ra_target.m
+        clock_hours: int = int(clock[:2])
+        clock_minutes: int = clock_hours * 60 + int(clock[3:])
+        scope_ra_minutes: int = target_ra_minutes + clock_minutes
+        # Then, we add 1 minute for every 6 hours on the clock.
+        # i.e. after every 6 hours the celestial bodies will move by 1 minute.
+        # This accommodates the sky's progression for the current day.
+        sub_day_offset: int = clock_hours // 6
+        scope_ra_minutes += sub_day_offset
+        # Then, add 4 minutes for each whole day since calibration.
+        # The RTC date format is 'dd/mm/yyyy'.
+        # The celestial bodies drift by 4 minutes per day
+        # The maximum correction is 364 days. After each year we're back to
+        # a daily offset of '0'.
+        date_day: int = rtc[2]
+        date_month: int = rtc[1]
+        date_year: int = rtc[0]
+        elapsed_days: int = days_since_calibration(calibration_date.d,
+                                                   calibration_date.m,
+                                                   date_day,
+                                                   date_month,
+                                                   date_year)
+        assert elapsed_days >= 0
+        # If calibration was on the 4th and today is the 5th the days between
+        # the dates is '1' but, the first 24 hours is handled by the
+        # 'sub_day_offset' so we must only count whole days, i.e. we subtract
+        # '1' from the result to accommodate the
+        # 'sub_day_offset'.
+        whole_days: int = elapsed_days - 1 if elapsed_days else 0
+        whole_days_offset: int = 4 * whole_days
+        scope_ra_minutes += whole_days_offset
+        # Finally, if the resultant minutes amounts to more than 24 hours
+        # then wrap the time, i.e. 24:01 becomes 0:01.
+        if scope_ra_minutes >= _DAY_MINUTES:
+            scope_ra_minutes -= _DAY_MINUTES
+        # Convert minutes to hours and minutes,
+        # which gives us our corrected RA axis value.
+        scope_ra_hours: int = scope_ra_minutes // 60
+        scope_ra_minutes = scope_ra_minutes % 60
+        scope_ra_human: str = f'{scope_ra_hours}h{scope_ra_minutes:02d}m'
+        print(f'For RA {ra_target.h}h{ra_target.m}m' +
+              f' set RA Axis to {scope_ra_human}' +
+              f' @ {clock}' +
+              f' + {whole_days_offset}m ({whole_days} days)' +
+              f' + {sub_day_offset}m ({clock_hours:02d}:**)')
+        # Display
+        scope_ra: str = f'{scope_ra_hours:02d}{scope_ra_minutes:02d}'
+        self.show(scope_ra)
+
+    def show_time(self,
+                  hour: Optional[int] = None,
+                  minute: Optional[int] = None) -> None:
+        """Displays the current RTC unless an hour and minute are specified.
+        """
+
+        if not hour or not minute:
+            rtc_time: Tuple = self._rtc.datetime()
+            # We just need HHMM, which we'll call 'clock'.
+            clock: str = f'{rtc_time[4]:02d}{rtc_time[5]:02d}'
+        else:
+            # User-provided value
+            clock = f'{hour:02d}{minute:02d}'
+
+        # Display
+        assert len(clock) == 4
+        self.show(clock)
+
+    def show_ra_target(self, ra_target) -> None:
+        """Displays the raw RA target value.
+        """
+        # Just display the raw RA value
+        clock: str = f'{ra_target.h:02d}{ra_target.m:02d}'
+
+        # Display
+        self.show(clock)
+
+    def show_calibration_date(self, calibration_date) -> None:
+        """Displays the current calibration_date (day and month).
+        The month is rendered as a two-letter abbreviation to avoid
+        confusion with the target RA.
+        """
+        # The left-hand value (numerical day)
+        clock: str = f'{calibration_date.d:2d}'
+        # The right-hand value (abbreviated month)
+        clock += _MONTH_NAME[calibration_date.m]
+
+        # Display
+        self.show(clock)
+
+    def show(self, value: str) -> None:
+        """Set the display, given a 4-digit string '[HH][MM]'.
+        """
+        assert isinstance(value, str)
+        assert len(value) == 4
+
+        # Hour [HH] (leading zero replaced by ' ')
+        if value[0] == '0':
+            self.l_matrix.set_pair(' ' + value[1:2])
+        else:
+            self.l_matrix.set_pair(value[:2])
+        # Minute [MM]
+        self.r_matrix.set_pair(value[2:])
+
+        self.l_matrix.show()
+        self.r_matrix.show()
+
+
+class RaFRAM:
+    """A RA wrapper around a FRAM class. This class provides convenient
+    RA-specific storage using the underlying FRAM. Here we provide
+    methods to simplify the storage and retrieval of 'brightness',
+    'RA target' and 'calibration date', all persisted safely in a FRAM
+    module.
+
+    Changes to values are written and cached minimising the number
+    of FRAM reads that take place.
+    """
+
+    # Default values,
+    # used when reading if no FRAM value exists.
+
+    # Default brightness (lowest)
+    DEFAULT_BRIGHTNESS: int = _MIN_BRIGHTNESS
+
+    # Markers.
+    # Values that prefix every stored value. These are used to indicate
+    # whether the corresponding (potentially multibyte) value
+    # is either valid or invalid.
+    # Markers (and data values) must be +ve byte values (0-127)
+    _INVALID: int = 0  # The value cannot be trusted
+    _VALID: int = 33  # The value can be trusted
+
+    # Memory Map
+    #
+    # +--------+----------------------------------
+    # | Offset | Purpose
+    # +--------+----------------------------------
+    # | *   0  | Brightness Marker
+    # |     1  | Brightness Value [1..20]
+    # | *   2  | RA Target Marker
+    # |     3  | RA Target (Hours) [0..23]
+    # |     4  | RA Target (Minutes) [0..59]
+    # | *   5  | Calibration Date Marker
+    # |     6  | Calibration Date (Day) [1..31]
+    # |     7  | Calibration Date (Month) [1..12]
+    # +--------+----------------------------------
+    _OFFSET_BRIGHTNESS: int = 0  # 1 byte
+    _OFFSET_RA_TARGET: int = 2  # 2 bytes
+    _OFFSET_CALIBRATION_DATE: int = 5  # 2 bytes
+
+    def __init__(self, fram):
+        assert fram
+
+        # Save the FRAM reference
+        self._fram = fram
+
+        # Cached values of data.
+        # Set when reading or writing the corresponding values.
+        self._ra_target: Optional[RA] = None
+        self._brightness: Optional[int] = None
+        self._calibration_date: Optional[CalibrationDate] = None
+
+    def _write_value(self, offset: int, value: Union[int, List[int]]) -> None:
+        assert offset >= 0
+
+        # Set marker to invalid
+        # Write value (or values)
+        # Set marker to valid
+        self._fram.write_byte(offset, RaFRAM._INVALID)
+        if isinstance(value, int):
+            assert value >= 0
+            assert value <= 127
+            self._fram.write_byte(offset + 1, value)
+        else:
+            assert isinstance(value, list)
+            value_offset: int = offset + 1
+            for a_value in value:
+                assert a_value >= 0
+                assert a_value <= 127
+                self._fram.write_byte(value_offset, a_value)
+                value_offset += 1
+        self._fram.write_byte(offset, RaFRAM._VALID)
+
+    def _read_value(self, offset: int) -> int:
+        """Reads the value form the offset.
+        The offset provided is the marker, we read the value
+        after the marker.
+        """
+        assert offset >= 0
+        assert offset + 1 < 32_768
+
+        value: int = self._fram.read_byte(offset + 1)
+        assert value >= 0
+
+        return value
+
+    def _read_values(self, offset: int, length: int) -> List[int]:
+        """Reads the values form the offset.
+        The offset provided is the marker, we start reading
+        after the marker.
+        """
+        assert offset >= 0
+        assert length > 0
+        assert offset + 1 + length < 32_768
+
+        value: List[int] = []
+        for value_offset in range(length):
+            value.append(self._fram.read_byte(offset + 1 + value_offset))
+        assert len(value) == length
+
+        return value
+
+    def _is_value_valid(self, offset: int) -> bool:
+        assert offset >= 0
+
+        byte_value: int = self._fram.read_byte(offset)
+        value: bool = byte_value == RaFRAM._VALID
+
+        return value
+
+    def read_brightness(self) -> int:
+
+        # Return the cached (last written) value if we have it
+        if self._brightness:
+            return self._brightness
+        # Is there a value in the FRAM?
+        # If so, read it, put it in the cache and return it.
+        if self._is_value_valid(RaFRAM._OFFSET_BRIGHTNESS):
+            self._brightness = self._read_value(RaFRAM._OFFSET_BRIGHTNESS)
+            return self._brightness
+        # No cached value, no stored value,
+        # so write and then return the default
+        self.write_brightness(RaFRAM.DEFAULT_BRIGHTNESS)
+        assert self._brightness
+        return self._brightness
+
+    def write_brightness(self, brightness: int) -> None:
+        assert brightness >= _MIN_BRIGHTNESS
+        assert brightness <= _MAX_BRIGHTNESS
+
+        # Write to FRAM
+        self._write_value(RaFRAM._OFFSET_BRIGHTNESS, brightness)
+
+        # Finally, save the value to the cached value
+        self._brightness = brightness
+
+    def read_ra_target(self) -> RA:
+
+        # Return the cached (last written) value if we have it
+        if self._ra_target:
+            return self._ra_target
+        # Is there a value in the FRAM?
+        # If so, read it, put it in the cache and return it.
+        if self._is_value_valid(RaFRAM._OFFSET_RA_TARGET):
+            value: List[int] = self._read_values(RaFRAM._OFFSET_RA_TARGET, 2)
+            self._ra_target = RA(value[0], value[1])
+            return self._ra_target
+        # No cached value,
+        # so write and then return the default
+        self.write_ra_target(DEFAULT_RA_TARGET)
+        return self._ra_target
+
+    def write_ra_target(self, ra_target: RA) -> None:
+        assert ra_target
+
+        # Write to FRAM
+        values: List[int] = [ra_target.h, ra_target.m]
+        self._write_value(RaFRAM._OFFSET_RA_TARGET, values)
+
+        # Finally, save the value to the cached value
+        self._ra_target = ra_target
+
+    def read_calibration_date(self) -> CalibrationDate:
+
+        # Return the cached (last written) value if we have it
+        if self._calibration_date:
+            return self._calibration_date
+        # Is there a value in the FRAM?
+        # If so, read it, put it in the cache and return it.
+        if self._is_value_valid(RaFRAM._OFFSET_CALIBRATION_DATE):
+            value: List[int] = \
+                self._read_values(RaFRAM._OFFSET_CALIBRATION_DATE, 2)
+            self._calibration_date = CalibrationDate(value[0], value[1])
+            return self._calibration_date
+        # No cached value,
+        # so write and then return the default
+        self.write_calibration_date(DEFAULT_CALIBRATION_DATE)
+        return self._calibration_date
+
+    def write_calibration_date(self, calibration_date: CalibrationDate) \
+            -> None:
+        assert calibration_date
+
+        # Write to FRAN
+        values: List[int] = [calibration_date.d, calibration_date.m]
+        self._write_value(RaFRAM._OFFSET_CALIBRATION_DATE, values)
+
+        # Finally, save the value to the cached value
+        self._calibration_date = calibration_date
+
+    def clear(self):
+        """Clears, invalidates, the RA FRAM values.
+        """
+        self._fram.write_byte(RaFRAM._OFFSET_BRIGHTNESS, RaFRAM._INVALID)
+        self._fram.write_byte(RaFRAM._OFFSET_RA_TARGET, RaFRAM._INVALID)
+        self._fram.write_byte(RaFRAM._OFFSET_CALIBRATION_DATE, RaFRAM._INVALID)
+
+
 # The command queue - the object between the
 # buttons, timers and the main-loop state machine.
 # At the moment we only handle one command at a time,
