@@ -10,7 +10,7 @@ Pimoroni customised MicroPython image.
 
 import time
 try:
-    from typing import Dict, List, NoReturn, Optional, Tuple, Union
+    from typing import Dict, List, Optional, Tuple, Union
 except ImportError:
     pass
 
@@ -1662,7 +1662,7 @@ _STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM, _RA_RTC)
 _COMMAND_QUEUE: CommandQueue = CommandQueue()
 
 
-def main() -> NoReturn:
+def main() -> None:
     """The main application entrypoint.
     Called when _RUN is True and not expected to return.
 
@@ -1679,15 +1679,15 @@ def main() -> NoReturn:
     _BUTTON_4.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
     _RA_DISPLAY.show('o   ')
-    time.sleep_ms(250)
+    time.sleep_ms(250)  # type: ignore
     _RA_DISPLAY.show(' o  ')
-    time.sleep_ms(250)
+    time.sleep_ms(250)  # type: ignore
     _RA_DISPLAY.show('  o ')
-    time.sleep_ms(250)
+    time.sleep_ms(250)  # type: ignore
     _RA_DISPLAY.show('   o')
-    time.sleep_ms(250)
+    time.sleep_ms(250)  # type: ignore
     _RA_DISPLAY.show('    ')
-    time.sleep_ms(1_000)
+    time.sleep_ms(1_000)  # type: ignore
 
     # Starting,
     # force initial display if compensated RA value...
