@@ -7,6 +7,8 @@ except ImportError:
 import micropython  # type: ignore
 from machine import I2C, Pin  # type: ignore
 from ucollections import namedtuple  # type: ignore
+from pimoroni_i2c import PimoroniI2C  # type: ignore
+from breakout_rtc import BreakoutRTC  # type: ignore
 
 # Uncomment when debugging callback problems
 micropython.alloc_emergency_exception_buf(100)
@@ -104,10 +106,9 @@ assert _FRAM_ADDRESS
 _MIN_BRIGHTNESS: int = 1
 _MAX_BRIGHTNESS: int = 20
 
-# Control button pin designation
+# Control button pin designation.
 # We don't need a 'Pin.PULL_UP'
-# because the buttons on the 'Pico Breadboard'
-# are pulled down.
+# because the buttons on the 'Pico Breadboard' are pulled down.
 _BUTTON_1: Pin = Pin(11, Pin.IN)
 _BUTTON_2: Pin = Pin(12, Pin.IN)
 _BUTTON_3: Pin = Pin(13, Pin.IN)
@@ -116,7 +117,7 @@ _BUTTON_4: Pin = Pin(14, Pin.IN)
 # A list of 2-letter month names
 # Get name with simple lookup _MONTH_NAME[month_no]
 # Get numerical value from string with _MONTH_NAME.index(month_str)
-_MONTH_NAME: List[str] = ['xx',  # Invalid (index = 0)
+_MONTH_NAME: List[str] = ['xx',  # Unused (index = 0)
                           'Ja', 'Fe', 'Mc', 'Ap', 'Ma', 'Jn',
                           'Ju', 'Au', 'Se', 'Oc', 'No', 'De']
 # Must have 13 entries (i.e. 12 plus dummy entry for month 0)
@@ -182,6 +183,64 @@ def days_since_calibration(c_day: int, c_month: int,
 
     assert now_offset > c_offset
     return now_offset - c_offset
+
+
+class RaRTC:
+    """A wrapper around the Pimoroni BreakoutRTC class, a driver for
+    the RV3028 RTC I2C breakout module.
+    """
+
+    def __init__(self):
+        """Initialises the object.
+        """
+        # Create an object from the expected (built-in) Pimoroni library
+        # that gives us access to the RV3028 RTC. We use this
+        # to set the value after editing.
+        self._pimoroni_i2c: PimoroniI2C = PimoroniI2C(sda=_SDA, scl=_SCL)
+        self._rtc: BreakoutRTC = BreakoutRTC(self._pimoroni_i2c)
+        # Setting backup switchover mode to '3'
+        # means the device will switch to battery
+        # when the power supply drops out.
+        self._rtc.set_backup_switchover_mode(3)
+        # And set to 24 hour mode (essential)
+        self._rtc.set_24_hour()
+
+    def datetime(self, new_datetime: Optional[RealTimeClock] = None)\
+            -> RealTimeClock:
+        """Gets (or sets and returns) the real-time clock.
+        """
+        if new_datetime is not None:
+            # Given a date-time,
+            # so use it to set the RTC value.
+            #
+            # We use a 1-based day of the week,
+            # the underlying RTC uses 0-based.
+            assert new_datetime.dow > 0
+            self._rtc.set_time(new_datetime.s, new_datetime.m, new_datetime.h,
+                               new_datetime.dow - 1,
+                               new_datetime.dom,
+                               new_datetime.month,
+                               new_datetime.year)
+
+        # Get the current RTC value,
+        # waiting until a value is ready.
+        new_rtc: Optional[RealTimeClock] = None
+        while new_rtc is None:
+            if self._rtc.update_time():
+                new_rtc = RealTimeClock(
+                    self._rtc.get_year(),
+                    self._rtc.get_month(),
+                    self._rtc.get_date(),
+                    self._rtc.get_weekday() + 1,
+                    self._rtc.get_hours(),
+                    self._rtc.get_minutes(),
+                    self._rtc.get_seconds())
+            else:
+                # No time available,
+                # sleep for a very short period (less than a second)
+                time.sleep_ms(250)  # type: ignore
+
+        return new_rtc
 
 
 class FRAM:
@@ -431,9 +490,9 @@ class LTP305Pair:
     target RA, the current time, and the calibration date.
     """
 
-    def __init__(self, i2c, rtc: RTC, address_l: int, address_r: int):
+    def __init__(self, i2c, rtc: RaRTC, address_l: int, address_r: int):
         """Initialises the display pair object. Given an i2c instance,
-        an RTC object, left and right display addresses,
+        an RaRTC object, left and right display addresses,
         and an optional brightness.
         """
         assert i2c
