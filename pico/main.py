@@ -1,5 +1,13 @@
 """The real-time RA compensation calculator.
+
+Designed to run on a Raspberry Pi Pico using the
+Pimoroni customised MicroPython image.
 """
+
+# Tested with: -
+#
+# - pimoroni-pico-v1.18.1-micropython-v1.18.uf2
+
 import time
 try:
     from typing import Dict, List, NoReturn, Optional, Tuple, Union
@@ -36,12 +44,12 @@ _RUN: bool = True
 #
 # You can get the current RTC date and time with: -
 #
-#    _RTC.datetime()
+#    _RA_RTC.datetime()
 #
 # To set time and date to "14:46:25 7-Feb-22", a Monday,
 # which is day 1 at our application level, day 0 in the RV3028: -
 #
-#    _RTC.datetime(RealTimeClock(2022, 2, 7, 1, 14, 46, 25))
+#    _RA_RTC.datetime(RealTimeClock(2022, 2, 7, 1, 14, 46, 25))
 #
 # If you haven't set the RTC you can use our RTC class by setting the _RUN
 # variable to False. This code can then be loaded (by something like Thonny)
@@ -333,7 +341,7 @@ class BaseFRAM:
         return int_got
 
 
-class LTP305:
+class DisplayPair:
     """A simple class to control a LTP305 in MicroPython on a Pico. Based on
     Pimoroni's Raspberry Pi code at https://github.com/pimoroni/ltp305-python.
     Instead of using the Pi i2c library (which we can't use on the Pico)
@@ -457,7 +465,7 @@ class LTP305:
         self._brightness = min(127, max(0, _brightness))
         if update:
             self._bus.writeto_mem(self._address,
-                                  LTP305.CMD_BRIGHTNESS,
+                                  DisplayPair.CMD_BRIGHTNESS,
                                   self._brightness.to_bytes(1, 'big'))
 
     def set_pixel(self, px: int, py: int, val: int) -> None:
@@ -490,7 +498,7 @@ class LTP305:
         if not isinstance(char, int):
             assert isinstance(char, str)
             char = ord(char)
-        pixel_data: List[int] = LTP305.font[char]
+        pixel_data: List[int] = DisplayPair.font[char]
         for px in range(5):
             for py in range(8):
                 c = pixel_data[px] & (0b1 << py)
@@ -500,26 +508,26 @@ class LTP305:
         """Update the LED matrix from the buffer.
         """
         self._bus.writeto_mem(self._address,
-                              LTP305.CMD_MATRIX_L,
+                              DisplayPair.CMD_MATRIX_L,
                               bytearray(self._buf_matrix_left))
         self._bus.writeto_mem(self._address,
-                              LTP305.CMD_MATRIX_R,
+                              DisplayPair.CMD_MATRIX_R,
                               bytearray(self._buf_matrix_right))
         self._bus.writeto_mem(self._address,
-                              LTP305.CMD_MODE,
-                              LTP305.MODE.to_bytes(1, 'big'))
+                              DisplayPair.CMD_MODE,
+                              DisplayPair.MODE.to_bytes(1, 'big'))
         self._bus.writeto_mem(self._address,
-                              LTP305.CMD_OPTIONS,
-                              LTP305.OPTS.to_bytes(1, 'big'))
+                              DisplayPair.CMD_OPTIONS,
+                              DisplayPair.OPTS.to_bytes(1, 'big'))
         self._bus.writeto_mem(self._address,
-                              LTP305.CMD_BRIGHTNESS,
+                              DisplayPair.CMD_BRIGHTNESS,
                               self._brightness.to_bytes(1, 'big'))
         self._bus.writeto_mem(self._address,
-                              LTP305.CMD_UPDATE,
-                              LTP305.UPDATE.to_bytes(1, 'big'))
+                              DisplayPair.CMD_UPDATE,
+                              DisplayPair.UPDATE.to_bytes(1, 'big'))
 
 
-class LTP305Pair:
+class RaDisplay:
     """A wrapper around two LTP305 objects to form a 4-character display.
     Basically a 4-character display used to display the compensated RA value,
     target RA, the current time, and the calibration date.
@@ -536,12 +544,12 @@ class LTP305Pair:
         self._rtc = rtc
         self._brightness_f: float = _MIN_BRIGHTNESS / _MAX_BRIGHTNESS
 
-        self.l_matrix = LTP305(i2c,
-                               address=address_l,
-                               brightness=self._brightness_f)
-        self.r_matrix = LTP305(i2c,
-                               address=address_r,
-                               brightness=self._brightness_f)
+        self.l_matrix = DisplayPair(i2c,
+                                    address=address_l,
+                                    brightness=self._brightness_f)
+        self.r_matrix = DisplayPair(i2c,
+                                    address=address_r,
+                                    brightness=self._brightness_f)
 
     def set_brightness(self, brightness: int) -> None:
         assert brightness >= _MIN_BRIGHTNESS
@@ -1054,7 +1062,7 @@ class StateMachine:
     # (8 is 4 seconds when the timer is 500mS)
     HOLD_TICKS: int = 8
 
-    def __init__(self, display: LTP305Pair, ra_fram: RaFRAM, rtc: RaRTC):
+    def __init__(self, display: RaDisplay, ra_fram: RaFRAM, rtc: RaRTC):
         assert display
         assert ra_fram
         assert rtc
@@ -1066,7 +1074,7 @@ class StateMachine:
         # When it reaches zero the display is cleared (state returns to IDLE).
         self._to_idle_countdown: int = 0
         # The display, FRAM and RTC
-        self._display: LTP305Pair = display
+        self._display: RaDisplay = display
         self._ra_fram: RaFRAM = ra_fram
         self._rtc: RaRTC = rtc
         # Read brightness, RA target and calibration date from
@@ -1632,19 +1640,19 @@ class StateMachine:
 # Global Objects
 
 # Our RTC object (RV3028 wrapper).
-_RTC: RaRTC = RaRTC()
+_RA_RTC: RaRTC = RaRTC()
 
 # The LED display
 # (using our real-time clock class)
-_DISPLAY: LTP305Pair =\
-    LTP305Pair(_I2C, _RTC, _DISPLAY_L_ADDRESS, _DISPLAY_R_ADDRESS)
+_RA_DISPLAY: RaDisplay =\
+    RaDisplay(_I2C, _RA_RTC, _DISPLAY_L_ADDRESS, _DISPLAY_R_ADDRESS)
 
 # Create the FRAM and RaFRAM instance
-_FRAM: BaseFRAM = BaseFRAM(_I2C, _FRAM_ADDRESS)
-_RA_FRAM: RaFRAM = RaFRAM(_FRAM)
+_BASE_FRAM: BaseFRAM = BaseFRAM(_I2C, _FRAM_ADDRESS)
+_RA_FRAM: RaFRAM = RaFRAM(_BASE_FRAM)
 
 # Create the StateMachine instance
-_STATE_MACHINE: StateMachine = StateMachine(_DISPLAY, _RA_FRAM, _RTC)
+_STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM, _RA_RTC)
 # Command 'queue'
 _COMMAND_QUEUE: CommandQueue = CommandQueue()
 
@@ -1659,15 +1667,15 @@ def main() -> NoReturn:
     _BUTTON_3.irq(trigger=Pin.IRQ_RISING, handler=btn_3)
     _BUTTON_4.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
-    _DISPLAY.show('o   ')
+    _RA_DISPLAY.show('o   ')
     time.sleep_ms(250)
-    _DISPLAY.show(' o  ')
+    _RA_DISPLAY.show(' o  ')
     time.sleep_ms(250)
-    _DISPLAY.show('  o ')
+    _RA_DISPLAY.show('  o ')
     time.sleep_ms(250)
-    _DISPLAY.show('   o')
+    _RA_DISPLAY.show('   o')
     time.sleep_ms(250)
-    _DISPLAY.show('    ')
+    _RA_DISPLAY.show('    ')
     time.sleep_ms(1_000)
 
     # Starting,
@@ -1693,7 +1701,7 @@ def main() -> NoReturn:
             print('Got failure from StateMachine. Leaving.')
             break
 
-    _DISPLAY.show('Exit')
+    _RA_DISPLAY.show('Exit')
 
     # Reset the state machine...
     _STATE_MACHINE.reset()
@@ -1704,7 +1712,7 @@ def main() -> NoReturn:
     _BUTTON_3.irq()
     _BUTTON_4.irq()
 
-    _DISPLAY.show('Done')
+    _RA_DISPLAY.show('Done')
 
 
 # Main ------------------------------------------------------------------------
