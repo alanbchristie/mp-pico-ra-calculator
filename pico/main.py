@@ -5,7 +5,7 @@ except ImportError:
     pass
 
 import micropython  # type: ignore
-from machine import I2C, Pin  # type: ignore
+from machine import I2C, Pin, Timer  # type: ignore
 from ucollections import namedtuple  # type: ignore
 from pimoroni_i2c import PimoroniI2C  # type: ignore
 from breakout_rtc import BreakoutRTC  # type: ignore
@@ -243,8 +243,8 @@ class RaRTC:
         return new_rtc
 
 
-class FRAM:
-    """Driver for the FRAM breakout.
+class BaseFRAM:
+    """Base driver for the FRAM breakout.
     """
 
     def __init__(self, i2c, address):
@@ -695,11 +695,11 @@ class RaFRAM:
     _OFFSET_RA_TARGET: int = 2  # 2 bytes
     _OFFSET_CALIBRATION_DATE: int = 5  # 2 bytes
 
-    def __init__(self, fram):
+    def __init__(self, fram: BaseFRAM):
         assert fram
 
         # Save the FRAM reference
-        self._fram = fram
+        self._fram: BaseFRAM = fram
 
         # Cached values of data.
         # Set when reading or writing the corresponding values.
@@ -980,6 +980,590 @@ def tick(timer):
     assert timer
 
     _COMMAND_QUEUE.put(_CMD_TICK)
+
+
+class StateMachine:
+    """The application state machine.
+    """
+    # The individual states
+    S_IDLE: int = 0
+    S_DISPLAY_RA: int = 1
+    S_DISPLAY_RA_TARGET: int = 2
+    S_DISPLAY_CLOCK: int = 3
+    S_DISPLAY_C_DATE: int = 4
+    S_PROGRAM_RA_TARGET_H: int = 5
+    S_PROGRAM_RA_TARGET_M: int = 6
+    S_PROGRAM_CLOCK: int = 7
+    S_PROGRAM_C_DAY: int = 8
+    S_PROGRAM_C_MONTH: int = 9
+
+    # Timer period (milliseconds).
+    # When it's enabled a _CMD_TICK command is issued at this rate.
+    TIMER_PERIOD_MS: int = 500
+    # Number of timer ticks to hold the display before returning to idle
+    # (8 is 4 seconds when the timer is 500mS)
+    HOLD_TICKS: int = 8
+
+    def __init__(self, display: LTP305Pair, ra_fram: RaFRAM, rtc: RaRTC):
+        assert display
+        assert ra_fram
+        assert rtc
+
+        # The current state
+        self._state: int = StateMachine.S_IDLE
+        # A countdown timer.
+        # Each _CMD_TICK command decrements this value until it reaches zero.
+        # When it reaches zero the display is cleared (state returns to IDLE).
+        self._to_idle_countdown: int = 0
+        # The display, FRAM and RTC
+        self._display: LTP305Pair = display
+        self._ra_fram: RaFRAM = ra_fram
+        self._rtc: RaRTC = rtc
+        # Read brightness, RA target and calibration date from
+        # the FRAM. Defaults will be used if written values are not found.
+        self._brightness: int = self._ra_fram.read_brightness()
+        self._ra_target: RA = self._ra_fram.read_ra_target()
+        self._calibration_date: CalibrationDate = \
+            self._ra_fram.read_calibration_date()
+
+        # Set the display's initial brightness
+        self._display.set_brightness(self._brightness)
+
+        # A Timer object.
+        # Initialised when something is displayed.
+        # De-initialised when the display is cleared.
+        # The timer runs outside the context of this object,
+        # we just enable and disable it.
+        self._timer: Optional[Timer] = None
+
+        # Program mode variables.
+        # When in program mode the display flashes.
+        # Whether the left, right or left and right displays flash
+        # will depend on the state we're in.
+        self._programming: bool = False
+        self._programming_left: bool = False
+        self._programming_right: bool = False
+        # The state that's being programmed.
+        self._programming_state: int = StateMachine.S_IDLE
+        # Current visibility of left and right digit-pair
+        # These values toggled and use to flash the appropriate character pair
+        # on each timer tick depending on the value of
+        # _programming_left or _programming_right.
+        self._programming_left_on: bool = False
+        self._programming_right_on: bool = False
+        # The 4-character string value to present to the display
+        # when programming.
+        self._programming_value: Optional[str] = None
+
+    def _clear_program_mode(self) -> None:
+        self._programming = False
+        self._programming_value = None
+
+    def _start_timer(self, to_idle: bool = True) -> None:
+        """Starts the timer.
+        If to_idle is True the timer is a countdown to idle.
+        where the mode will rever to idle when the countdown is complete.
+        """
+        if self._timer is None:
+            self._timer = Timer(period=StateMachine.TIMER_PERIOD_MS,
+                                callback=tick)
+        if to_idle:
+            self._to_idle_countdown = StateMachine.HOLD_TICKS
+
+    def _stop_timer(self) -> None:
+        if self._timer:
+            self._timer.deinit()
+            self._timer = None
+        self._to_idle_countdown = 0
+
+    def _program_up(self) -> None:
+        """Called when the 'UP' button has been pressed in program mode.
+        Here we need to appropriately increment the _programming_value.
+        """
+        assert self._programming_value
+
+        if self._state == StateMachine.S_PROGRAM_CLOCK:
+            # Run the clock backwards
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            minute += 1
+            if minute > 59:
+                minute = 0
+                hour += 1
+                if hour > 23:
+                    hour = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
+            # Adjust the hours only
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
+            hour += 1
+            if hour > 23:
+                hour = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
+            # Adjust the minutes only
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
+            minute += 1
+            if minute > 59:
+                minute = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
+            # Adjust the minutes only
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
+            minute += 1
+            if minute > 59:
+                minute = 0
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_C_MONTH:
+            # Adjust the month only
+            day: int = int(self._programming_value[:2])
+            month: int = _MONTH_NAME.index(self._programming_value[2:])
+            assert month >= 1
+            month += 1
+            if month > 12:
+                month = 1
+            # If the day number is now too large for this month,
+            # set it to the maximum for the current month.
+            day = min(_DAYS[month], day)
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
+        elif self._state == StateMachine.S_PROGRAM_C_DAY:
+            # Adjust the day only
+            day = int(self._programming_value[:2])
+            month = _MONTH_NAME.index(self._programming_value[2:])
+            day += 1
+            if day > _DAYS[month]:
+                day = 1
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
+
+    def _program_down(self) -> None:
+        """Called when the 'DOWN' button has been pressed in program mode.
+        Here we need to appropriately decrement the _programming_value.
+        """
+        assert self._programming_value
+
+        if self._state == StateMachine.S_PROGRAM_CLOCK:
+            # Run the clock backwards
+            hour: int = int(self._programming_value[:2])
+            minute: int = int(self._programming_value[2:])
+            minute -= 1
+            if minute < 0:
+                minute = 59
+                hour -= 1
+                if hour < 0:
+                    hour = 23
+            self._programming_value = f'{hour:02d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
+            # Adjust the hours only
+            hour = int(self._programming_value[:2])
+            minute = int(self._programming_value[2:])
+            hour -= 1
+            if hour < 0:
+                hour = 23
+            self._programming_value = f'{hour:2d}{minute:02d}'
+        elif self._state == StateMachine.S_PROGRAM_C_MONTH:
+            # Adjust the month only
+            day: int = int(self._programming_value[:2])
+            month: int = _MONTH_NAME.index(self._programming_value[2:])
+            assert month >= 1
+            month -= 1
+            if month < 1:
+                month = 12
+            # If the day number is now too large for this month,
+            # set it to the maximum for the current month.
+            day = min(_DAYS[month], day)
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
+        elif self._state == StateMachine.S_PROGRAM_C_DAY:
+            # Adjust the day only
+            day = int(self._programming_value[:2])
+            month = _MONTH_NAME.index(self._programming_value[2:])
+            day -= 1
+            if day < 1:
+                day = _DAYS[month]
+            self._programming_value = f'{day:2d}{_MONTH_NAME[month]}'
+
+    def process_command(self, command: int) -> bool:
+        """Process a command, where the actions depend on the
+        current 'state'.
+        """
+
+        if command == _CMD_TICK:
+            # Internal TICK (500mS)
+
+            if self._state in [StateMachine.S_IDLE]:
+                # Nothing to do
+                return True
+
+            # Auto-to-idle countdown?
+            if self._to_idle_countdown:
+                # If we get a TICK, all we do is decrement
+                # the countdown timer to 0. When it reaches
+                # zero we move to the IDLE state.
+                self._to_idle_countdown -= 1
+                if self._to_idle_countdown == 0:
+                    return self._to_idle()
+                return True
+
+            # Programming mode?
+            if self._programming:
+                assert self._programming_value
+                self._display.show(self._programming_value)
+                # Toggle left and right visibility depending on
+                # whether we're programming left or right or both.
+                if self._programming_left:
+                    if self._programming_left_on:
+                        self._display.clear(right=False)
+                        self._programming_left_on = False
+                    else:
+                        self._programming_left_on = True
+                if self._programming_right:
+                    if self._programming_right_on:
+                        self._display.clear(left=False)
+                        self._programming_right_on = False
+                    else:
+                        self._programming_right_on = True
+
+            # Handled if we get here
+            return True
+
+        if command == _CMD_BUTTON_1:
+            # "DISPLAY" button
+
+            # If not in programming mode we switch to another item to display.
+            # Here we cancel programming mode if it's set
+            # and then enter the normal mode of the item being displayed.
+
+            # Non-programming states
+            if self._state == StateMachine.S_IDLE:
+                return self._to_display_ra()
+            if self._state == StateMachine.S_DISPLAY_RA:
+                return self._to_display_ra_target()
+            if self._state == StateMachine.S_DISPLAY_RA_TARGET:
+                return self._to_display_clock()
+            if self._state == StateMachine.S_DISPLAY_CLOCK:
+                return self._to_display_calibration_date()
+            if self._state == StateMachine.S_DISPLAY_C_DATE:
+                return self._to_display_ra()
+
+            # Programming states
+            if self._programming:
+                # Switch programming off.
+                # Return to the state that was being programmed...
+                self._programming = False
+                if self._programming_state == StateMachine.S_DISPLAY_RA_TARGET:
+                    return self._to_display_ra_target()
+                if self._programming_state == StateMachine.S_DISPLAY_CLOCK:
+                    return self._to_display_clock()
+                if self._programming_state == StateMachine.S_DISPLAY_C_DATE:
+                    return self._to_display_calibration_date()
+
+            # If all else fails, nothing to do
+            return True
+
+        if command == _CMD_BUTTON_2:
+            # "PROGRAM" button
+
+            # Into programming mode (from valid non-programming states)
+            if self._state == StateMachine.S_DISPLAY_RA_TARGET:
+                return self._to_program_ra_target_h()
+            if self._state == StateMachine.S_DISPLAY_CLOCK:
+                return self._to_program_clock()
+            if self._state == StateMachine.S_DISPLAY_C_DATE:
+                return self._to_program_calibration_day()
+
+                # Move from left to right editing
+            # Applies when editing the RA Target or Calibration Date
+            if self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
+                return self._to_program_ra_target_m()
+            if self._state == StateMachine.S_PROGRAM_RA_TARGET_M:
+                return self._to_program_ra_target_h()
+
+            if self._state == StateMachine.S_PROGRAM_C_DAY:
+                return self._to_program_calibration_month()
+            if self._state == StateMachine.S_PROGRAM_C_MONTH:
+                return self._to_program_calibration_day()
+
+                # If we get here, nothing to do
+            return True
+
+        if command == _CMD_BUTTON_2_LONG:
+            # The program button's been pressed for a long time.
+            # This should be used to 'save' any programming value.
+
+            # Only act if we're in 'programming' mode.
+            if self._programming:
+                assert self._programming_value
+                if self._state in [StateMachine.S_PROGRAM_RA_TARGET_H,
+                                   StateMachine.S_PROGRAM_RA_TARGET_M]:
+                    # The Target RA was being edited
+                    ra_h: int = int(self._programming_value[:2])
+                    ra_m: int = int(self._programming_value[2:])
+                    self._ra_target = RA(ra_h, ra_m)
+                    self._ra_fram.write_ra_target(self._ra_target)
+                    # With the RA target changed, the best state to
+                    # return to is to display the new corrected RA
+                    return self._to_display_ra()
+
+                if self._state in [StateMachine.S_PROGRAM_CLOCK]:
+                    # The clock was being edited
+                    hour: int = int(self._programming_value[:2])
+                    minute: int = int(self._programming_value[2:])
+                    # Read the current time and write the new
+                    # hours and minutes. We're given an 8-value tuple
+                    # with the following content:
+                    # (y, m, d, weekday, h, m, seconds, sub-seconds)
+                    rtc: RealTimeClock = self._rtc.datetime()
+                    # Rest the seconds
+                    rtc.h = hour
+                    rtc.m = minute
+                    rtc.s = 0
+                    rtc_result = self._rtc.datetime(rtc)
+                    # And then move to displaying the clock
+                    return self._to_display_clock()
+
+                if self._state in [StateMachine.S_PROGRAM_C_MONTH,
+                                   StateMachine.S_PROGRAM_C_DAY]:
+                    # The calibration date was being edited
+                    day: int = int(self._programming_value[:2])
+                    month: int = _MONTH_NAME.index(self._programming_value[2:])
+                    assert month >= 1
+                    self._calibration_date = CalibrationDate(day, month)
+                    self._ra_fram \
+                        .write_calibration_date(self._calibration_date)
+                    # With the calibration date changed, the best state to
+                    # return to is to display the new corrected date
+                    return self._to_display_calibration_date()
+
+            # Nothing to do yet
+            return True
+
+        if command == _CMD_BUTTON_3:
+            # "DOWN" button
+
+            if self._state not in [StateMachine.S_IDLE]:
+                if self._programming:
+                    self._program_down()
+                else:
+                    # Decrease display brightness,
+                    # and reset the timer.
+                    self._to_idle_countdown = StateMachine.HOLD_TICKS
+                    if self._brightness > _MIN_BRIGHTNESS:
+                        self._brightness -= 1
+                        self._ra_fram.write_brightness(self._brightness)
+                        self._display.set_brightness(self._brightness)
+
+            return True
+
+        if command == _CMD_BUTTON_4:
+            # "UP" button
+
+            if self._state not in [StateMachine.S_IDLE]:
+                if self._programming:
+                    self._program_up()
+                else:
+                    # Increase display brightness,
+                    # and reset the timer.
+                    self._to_idle_countdown = StateMachine.HOLD_TICKS
+                    if self._brightness < _MAX_BRIGHTNESS:
+                        self._brightness += 1
+                        self._ra_fram.write_brightness(self._brightness)
+                        self._display.set_brightness(self._brightness)
+
+            return True
+
+        # Something odd if we get here
+        print(f'Command {command} not handled. Returning False.')
+        return False
+
+    def reset(self) -> None:
+        """Called from the main loop to reset (stop) the machine.
+        """
+        if self._timer:
+            self._timer.deinit()
+            self._timer = None
+
+    def _to_idle(self) -> bool:
+        """Actions on entry to the IDLE state.
+        """
+
+        # Always clear any programming
+        self._clear_program_mode()
+
+        # Always set the new state
+        self._state = StateMachine.S_IDLE
+        # Initialise state variables
+        self._display.clear()
+        self._stop_timer()
+
+        return True
+
+    def _to_display_ra(self) -> bool:
+        """Actions on entry to the DISPLAY_RA state.
+        """
+
+        # Always clear any programming
+        self._clear_program_mode()
+
+        # Always set the new state
+        self._state = StateMachine.S_DISPLAY_RA
+        # Initialise state variables
+        self._start_timer()
+        self._display.show_ra(self._ra_target, self._calibration_date)
+
+        return True
+
+    def _to_display_ra_target(self) -> bool:
+        """Actions on entry to the DISPLAY_RA_TARGET state.
+        """
+
+        # Always clear any programming
+        self._clear_program_mode()
+
+        # Always set the new state
+        self._state = StateMachine.S_DISPLAY_RA_TARGET
+        # Initialise state variables
+        self._start_timer()
+        self._display.show_ra_target(self._ra_target)
+
+        return True
+
+    def _to_display_clock(self) -> bool:
+        """Actions on entry to the DISPLAY_CLOCK state.
+        """
+
+        # Always clear any programming
+        self._clear_program_mode()
+
+        # Always set the new state
+        self._state = StateMachine.S_DISPLAY_CLOCK
+        # Initialise state variables
+        self._start_timer()
+        self._display.show_time()
+
+        return True
+
+    def _to_display_calibration_date(self) -> bool:
+        """Actions on entry to the DISPLAY_TIME state.
+        """
+
+        # Always clear any programming
+        self._clear_program_mode()
+
+        # Always set the new state
+        self._state = StateMachine.S_DISPLAY_C_DATE
+        # Initialise state variables
+        self._start_timer()
+        self._display.show_calibration_date(self._calibration_date)
+
+        return True
+
+    def _to_program_ra_target_h(self) -> bool:
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_RA_TARGET_H
+
+        # Clear any countdown timer
+        # While programming there is no idle countdown.
+        self._to_idle_countdown = 0
+        # Set programming mode
+        self._programming = True
+        self._programming_left = True
+        self._programming_right = False
+        self._programming_left_on = True
+        self._programming_right_on = True
+        self._programming_state = StateMachine.S_DISPLAY_RA_TARGET
+
+        # Start the timer
+        # (used to flash the appropriate part of the display)
+        self._start_timer(to_idle=False)
+
+        if not self._programming_value:
+            # What is the value we're programming?
+            ra_target: RA = self._ra_fram.read_ra_target()
+            self._programming_value = f'{ra_target.h:02d}{ra_target.m:02d}'
+            self._display.show(self._programming_value)
+
+        return True
+
+    def _to_program_ra_target_m(self) -> bool:
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_RA_TARGET_M
+
+        # Set programming mode
+        self._programming_left = False
+        self._programming_right = True
+
+        return True
+
+    def _to_program_clock(self) -> bool:
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_CLOCK
+
+        # Clear any countdown timer
+        # While programming there is no idle countdown.
+        self._to_idle_countdown = 0
+        # Set programming mode
+        self._programming = True
+        self._programming_left = True
+        self._programming_right = True
+        self._programming_left_on = True
+        self._programming_right_on = True
+        self._programming_state = StateMachine.S_DISPLAY_CLOCK
+
+        # Start the timer
+        # (used to flash the appropriate part of the display)
+        self._start_timer(to_idle=False)
+
+        # What is the value we're programming?
+        rtc_time: Tuple = self._rtc.datetime()
+        # We just need HHMM...
+        self._programming_value = f'{rtc_time[4]:02d}{rtc_time[5]:02d}'
+        self._display.show(self._programming_value)
+
+        return True
+
+    def _to_program_calibration_day(self) -> bool:
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_C_DAY
+
+        # Clear any countdown timer
+        # While programming there is no idle countdown.
+        self._to_idle_countdown = 0
+        # Set programming mode
+        self._programming = True
+        self._programming_left = True
+        self._programming_right = False
+        self._programming_left_on = True
+        self._programming_right_on = True
+        self._programming_state = StateMachine.S_DISPLAY_C_DATE
+
+        # Start the timer
+        # (used to flash the appropriate part of the display)
+        self._start_timer(to_idle=False)
+
+        if not self._programming_value:
+            # What is the value we're programming?
+            c_date: CalibrationDate = self._ra_fram.read_calibration_date()
+            self._programming_value = f'{c_date.d:2d}{_MONTH_NAME[c_date.m]}'
+            self._display.show(self._programming_value)
+
+        return True
+
+    def _to_program_calibration_month(self) -> bool:
+
+        # Always set the new state
+        self._state = StateMachine.S_PROGRAM_C_MONTH
+
+        # Set programming mode
+        self._programming_left = False
+        self._programming_right = True
+
+        return True
 
 
 # Command 'queue'
