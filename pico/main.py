@@ -1,3 +1,5 @@
+"""The real-time RA compensation calculator.
+"""
 import time
 try:
     from typing import Dict, List, NoReturn, Optional, Tuple, Union
@@ -10,16 +12,43 @@ from ucollections import namedtuple  # type: ignore
 from pimoroni_i2c import PimoroniI2C  # type: ignore
 from breakout_rtc import BreakoutRTC  # type: ignore
 
-# Uncomment when debugging callback problems
-micropython.alloc_emergency_exception_buf(100)
-
 # _RUN
 #
-# Setting this to False will avoid running the application.
+# Setting this to False will avoid automatically running the application.
 # Setting to False is useful because you get all the
 # global objects and can manually configure/erase the FRAM
 # and set the RTC module.
+#
+# If the application is running you can press and hold the "UP" button
+# (button 4) for a long-press to cause the application to stop.
 _RUN: bool = True
+
+# To erase our section of the FRAM run: -
+#
+#    _RA_FRAM.clear()
+#
+# We do not use the MicroPython built-in RTC class instead we
+# use the RV3028 I2C module and, before running the code for the first time
+# we need to set the initial time. The RV3028 is extremly low power
+# (45nA at 3V) and is factory calibrated to +/-1ppm at 25 degrees
+# (a drift of 1 minute every 23 months).
+#
+# You can get the current RTC date and time with: -
+#
+#    _RTC.datetime()
+#
+# To set time and date to "14:46:25 7-Feb-22", a Monday,
+# which is day 1 at our application level, day 0 in the RV3028: -
+#
+#    _RTC.datetime(RealTimeClock(2022, 2, 7, 1, 14, 46, 25))
+#
+# If you haven't set the RTC you can use our RTC class by setting the _RUN
+# variable to False. This code can then be loaded (by something like Thonny)
+# and you'll have access to the objects described above to clear the FRAM
+# and set the date and time.
+
+# Uncomment when debugging callback problems
+micropython.alloc_emergency_exception_buf(100)
 
 # An RA value: hours and minutes.
 RA: namedtuple = namedtuple('RA', ('h', 'm'))
@@ -1621,28 +1650,16 @@ def main() -> NoReturn:
     _BUTTON_3.irq(trigger=Pin.IRQ_RISING, handler=btn_3)
     _BUTTON_4.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
-    # App's starting.
-    # Prompt user they need to press a button
-    # to start the app.
-    _DISPLAY.show(' Any')
-
-    # What for user to press the button before extinguishing the LED
-    button_hit: bool = False
-    while not button_hit:
-        if _COMMAND_QUEUE.get() is not None:
-            button_hit = True
-        else:
-            time.sleep(1)
-
     _DISPLAY.show('o   ')
-    time.sleep_ms(500)
+    time.sleep_ms(250)
     _DISPLAY.show(' o  ')
-    time.sleep_ms(500)
+    time.sleep_ms(250)
     _DISPLAY.show('  o ')
-    time.sleep_ms(500)
+    time.sleep_ms(250)
     _DISPLAY.show('   o')
-    time.sleep_ms(500)
+    time.sleep_ms(250)
     _DISPLAY.show('    ')
+    time.sleep_ms(1_000)
 
     # Starting,
     # force initial display if compensated RA value...
