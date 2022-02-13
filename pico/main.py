@@ -46,7 +46,7 @@ _RUN: bool = True
 #
 # We do not use the MicroPython built-in RTC class instead we
 # use the RV3028 I2C module and, before running the code for the first time
-# we need to set the initial time. The RV3028 is extremly low power
+# we need to set the initial time. The RV3028 is extremely low power
 # (45nA at 3V) and is factory calibrated to +/-1ppm at 25 degrees
 # (a drift of 1 minute every 23 months).
 #
@@ -331,7 +331,7 @@ class BaseFRAM:
 
         return num_ack != 3
 
-    def read_byte(self, offset) -> int:
+    def read_byte(self, offset: int) -> int:
         """Reads a single byte, assumed to be in the range 0-127,
         returning it as an int.
         """
@@ -645,8 +645,17 @@ class DisplayPair:
     CMD_MATRIX_R = 0x01
 
     def __init__(self, i2c, address: int = 0x61, brightness: float = 0.1):
+        """Initialises a dual LTP305 LED matrix display, given a MicroPython
+        I2C object and a device address.
+
+        The brightness, a floating point value between 0.0 and 1.0 is used to
+        set the display brightness (an integer value between 0 and 127,
+        inclusive)
+        """
         assert i2c
         assert address in [0x61, 0x62, 0x63]
+        assert brightness >= 0.0
+        assert brightness <= 1.0
 
         self._bus = i2c
         self._address: int = address
@@ -737,29 +746,24 @@ class DisplayPair:
                               DisplayPair.UPDATE.to_bytes(1, 'big'))
 
 
-class RaDisplay:
-    """A wrapper around two LTP305 objects to form a 4-character display.
-    Basically a 4-character display used to display the compensated RA value,
+class DisplayQuad:
+    """A wrapper around two LTP305 LED matrix displays to form a 4-character
+    display used to display the compensated RA value,
     target RA, the current time, and the calibration date.
     """
 
-    def __init__(self, i2c, rtc: RaRTC, address_l: int, address_r: int):
-        """Initialises the display pair object. Given an i2c instance,
-        an RaRTC object, left and right display addresses,
-        and an optional brightness.
+    def __init__(self, left: DisplayPair, right: DisplayPair, rtc: RaRTC):
+        """Initialises the display pair object. Given two display pairs,
+        left and right displays.
         """
-        assert i2c
-        assert rtc
+        assert left
+        assert right
 
         self._rtc = rtc
         self._brightness_f: float = _MIN_BRIGHTNESS / _MAX_BRIGHTNESS
 
-        self.l_matrix = DisplayPair(i2c,
-                                    address=address_l,
-                                    brightness=self._brightness_f)
-        self.r_matrix = DisplayPair(i2c,
-                                    address=address_r,
-                                    brightness=self._brightness_f)
+        self.l_matrix = left
+        self.r_matrix = right
 
     def set_brightness(self, brightness: int) -> None:
         assert brightness >= _MIN_BRIGHTNESS
@@ -865,7 +869,7 @@ class RaDisplay:
         assert len(clock) == 4
         self.show(clock)
 
-    def show_ra_target(self, ra_target) -> None:
+    def show_ra_target(self, ra_target: RA) -> None:
         """Displays the raw RA target value.
         """
         # Just display the raw RA value
@@ -874,7 +878,7 @@ class RaDisplay:
         # Display
         self.show(clock)
 
-    def show_calibration_date(self, calibration_date) -> None:
+    def show_calibration_date(self, calibration_date: CalibrationDate) -> None:
         """Displays the current calibration_date (day and month).
         The month is rendered as a two-letter abbreviation to avoid
         confusion with the target RA.
@@ -911,6 +915,15 @@ class RaDisplay:
 # i.e. queue size is 1.
 class CommandQueue:
 
+    # CommandQueue commands (just unique integers)
+    BUTTON_1: int = 1           # Button 1 has been pressed
+    BUTTON_2: int = 2           # Button 2 has been pressed
+    BUTTON_2_LONG: int = 22     # Button 2 has been pressed for a long time
+    BUTTON_3: int = 3           # Button 3 has been pressed
+    BUTTON_4: int = 4           # Button 4 has been pressed
+    BUTTON_4_LONG: int = 44     # Button 4 has been pressed for a long time
+    TICK: int = 10              # The timer has fired
+
     def __init__(self):
         self._queue_size: int = 1
         self._queue = []
@@ -931,18 +944,8 @@ class CommandQueue:
         return None
 
 
-# CommandQueue commands (just unique integers)
-_CMD_BUTTON_1: int = 1          # Button 1 has been pressed
-_CMD_BUTTON_2: int = 2          # Button 2 has been pressed
-_CMD_BUTTON_2_LONG: int = 22    # Button 2 has been pressed for a long time
-_CMD_BUTTON_3: int = 3          # Button 3 has been pressed
-_CMD_BUTTON_4: int = 4          # Button 4 has been pressed
-_CMD_BUTTON_4_LONG: int = 44    # Button 4 has been pressed for a long time
-_CMD_TICK: int = 10             # The timer has fired
-
-
 def btn_1(pin: Pin) -> None:
-    """The '**DISPLAY** button. Creates the _CMD_BUTTON_1 command.
+    """The '**DISPLAY** button. Creates the BUTTON_1 command.
 
     Pressing this when the display is off
     will display the current (real-time) RA axis compensation value.
@@ -957,12 +960,12 @@ def btn_1(pin: Pin) -> None:
     pin.irq(handler=None)
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
-        _COMMAND_QUEUE.put(_CMD_BUTTON_1)
+        _COMMAND_QUEUE.put(CommandQueue.BUTTON_1)
     pin.irq(trigger=Pin.IRQ_RISING, handler=btn_1)
 
 
 def btn_2(pin: Pin) -> None:
-    """The **PROGRAM** button. Creates the _CMD_BUTTON_2 and _CMD_BUTTON_2_LONG
+    """The **PROGRAM** button. Creates the BUTTON_2 and BUTTON_2_LONG
     commands.
 
     Pressing this on a programmable value is displayed (like the target RA)
@@ -977,8 +980,8 @@ def btn_2(pin: Pin) -> None:
     pin.irq(handler=None)
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     # Measure the time pressed.
-    # Short, we insert a _CMD_BUTTON_2 command,
-    # Long, we insert a _CMD_BUTTON_2_LONG command.
+    # Short, we insert a BUTTON_2 command,
+    # Long, we insert a BUTTON_2_LONG command.
     if pin.value():
         down_ms: int = time.ticks_ms()  # type: ignore
         depressed: bool = True
@@ -989,14 +992,14 @@ def btn_2(pin: Pin) -> None:
         up_ms: int = time.ticks_ms()  # type: ignore
         duration: int = time.ticks_diff(up_ms, down_ms)  # type: ignore
         if duration >= _LONG_BUTTON_PRESS_MS:
-            _COMMAND_QUEUE.put(_CMD_BUTTON_2_LONG)
+            _COMMAND_QUEUE.put(CommandQueue.BUTTON_2_LONG)
         else:
-            _COMMAND_QUEUE.put(_CMD_BUTTON_2)
+            _COMMAND_QUEUE.put(CommandQueue.BUTTON_2)
     pin.irq(trigger=Pin.IRQ_RISING, handler=btn_2)
 
 
 def btn_3(pin: Pin) -> None:
-    """The **DOWN** button. Creates the _CMD_BUTTON_3 command.
+    """The **DOWN** button. Creates the BUTTON_3 command.
 
     Pressing this when the display is on decreases
     the display brightness. In programming mode it decreases the value that
@@ -1006,12 +1009,12 @@ def btn_3(pin: Pin) -> None:
     pin.irq(handler=None)
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     if pin.value():
-        _COMMAND_QUEUE.put(_CMD_BUTTON_3)
+        _COMMAND_QUEUE.put(CommandQueue.BUTTON_3)
     pin.irq(trigger=Pin.IRQ_RISING, handler=btn_3)
 
 
 def btn_4(pin: Pin) -> None:
-    """The **UP** button. Creates the _CMD_BUTTON_4 and _CMD_BUTTON_4_LONG
+    """The **UP** button. Creates the BUTTON_4 and BUTTON_4_LONG
     commands
 
     Pressing this when the display is on increases
@@ -1025,8 +1028,8 @@ def btn_4(pin: Pin) -> None:
     pin.irq(handler=None)
     time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
     # Measure the time pressed.
-    # Short, we insert a _CMD_BUTTON_4 command,
-    # Long, we insert a _CMD_BUTTON_4_LONG command.
+    # Short, we insert a BUTTON_4 command,
+    # Long, we insert a BUTTON_4_LONG command.
     if pin.value():
         down_ms: int = time.ticks_ms()  # type: ignore
         depressed: bool = True
@@ -1037,20 +1040,20 @@ def btn_4(pin: Pin) -> None:
         up_ms: int = time.ticks_ms()  # type: ignore
         duration: int = time.ticks_diff(up_ms, down_ms)  # type: ignore
         if duration >= _LONG_BUTTON_PRESS_MS:
-            _COMMAND_QUEUE.put(_CMD_BUTTON_4_LONG)
+            _COMMAND_QUEUE.put(CommandQueue.BUTTON_4_LONG)
         else:
-            _COMMAND_QUEUE.put(_CMD_BUTTON_4)
+            _COMMAND_QUEUE.put(CommandQueue.BUTTON_4)
     pin.irq(trigger=Pin.IRQ_RISING, handler=btn_4)
 
 
 def tick(timer):
-    """A timer callback. Creates the _CMD_TICK command.
+    """A timer callback. Creates the TICK command.
 
     Enabled only when display is on.
     """
     assert timer
 
-    _COMMAND_QUEUE.put(_CMD_TICK)
+    _COMMAND_QUEUE.put(CommandQueue.TICK)
 
 
 class StateMachine:
@@ -1069,13 +1072,13 @@ class StateMachine:
     S_PROGRAM_C_MONTH: int = 9
 
     # Timer period (milliseconds).
-    # When it's enabled a _CMD_TICK command is issued at this rate.
+    # When it's enabled a TICK command is issued at this rate.
     TIMER_PERIOD_MS: int = 500
     # Number of timer ticks to hold the display before returning to idle
     # (8 is 4 seconds when the timer is 500mS)
     HOLD_TICKS: int = 8
 
-    def __init__(self, display: RaDisplay, ra_fram: RaFRAM, rtc: RaRTC):
+    def __init__(self, display: DisplayQuad, ra_fram: RaFRAM, rtc: RaRTC):
         assert display
         assert ra_fram
         assert rtc
@@ -1083,11 +1086,11 @@ class StateMachine:
         # The current state
         self._state: int = StateMachine.S_IDLE
         # A countdown timer.
-        # Each _CMD_TICK command decrements this value until it reaches zero.
+        # Each TICK command decrements this value until it reaches zero.
         # When it reaches zero the display is cleared (state returns to IDLE).
         self._to_idle_countdown: int = 0
         # The display, FRAM and RTC
-        self._display: RaDisplay = display
+        self._display: DisplayQuad = display
         self._ra_fram: RaFRAM = ra_fram
         self._rtc: RaRTC = rtc
         # Read brightness, RA target and calibration date from
@@ -1268,12 +1271,12 @@ class StateMachine:
         current 'state'.
         """
 
-        if command == _CMD_BUTTON_4_LONG:
+        if command == CommandQueue.BUTTON_4_LONG:
             # A 'kill' command,
             # Returning False means the app will stop.
             return False
 
-        if command == _CMD_TICK:
+        if command == CommandQueue.TICK:
             # Internal TICK (500mS)
 
             if self._state in [StateMachine.S_IDLE]:
@@ -1312,7 +1315,7 @@ class StateMachine:
             # Handled if we get here
             return True
 
-        if command == _CMD_BUTTON_1:
+        if command == CommandQueue.BUTTON_1:
             # "DISPLAY" button
 
             # If not in programming mode we switch to another item to display.
@@ -1346,7 +1349,7 @@ class StateMachine:
             # If all else fails, nothing to do
             return True
 
-        if command == _CMD_BUTTON_2:
+        if command == CommandQueue.BUTTON_2:
             # "PROGRAM" button
 
             # Into programming mode (from valid non-programming states)
@@ -1372,7 +1375,7 @@ class StateMachine:
                 # If we get here, nothing to do
             return True
 
-        if command == _CMD_BUTTON_2_LONG:
+        if command == CommandQueue.BUTTON_2_LONG:
             # The program button's been pressed for a long time.
             # This should be used to 'save' any programming value.
 
@@ -1423,7 +1426,7 @@ class StateMachine:
             # Nothing to do yet
             return True
 
-        if command == _CMD_BUTTON_3:
+        if command == CommandQueue.BUTTON_3:
             # "DOWN" button
 
             if self._state not in [StateMachine.S_IDLE]:
@@ -1440,7 +1443,7 @@ class StateMachine:
 
             return True
 
-        if command == _CMD_BUTTON_4:
+        if command == CommandQueue.BUTTON_4:
             # "UP" button
 
             if self._state not in [StateMachine.S_IDLE]:
@@ -1655,17 +1658,19 @@ class StateMachine:
 # Our RTC object (RV3028 wrapper).
 _RA_RTC: RaRTC = RaRTC()
 
-# The LED display
-# (using our real-time clock class)
-_RA_DISPLAY: RaDisplay =\
-    RaDisplay(_I2C, _RA_RTC, _DISPLAY_L_ADDRESS, _DISPLAY_R_ADDRESS)
+# The RA LED display
+# A pair of displays with the assistance of our real-time clock class
+_LEFT_DISPLAY_PAIR = DisplayPair(_I2C, _DISPLAY_L_ADDRESS)
+_RIGHT_DISPLAY_PAIR = DisplayPair(_I2C, _DISPLAY_R_ADDRESS)
+_RA_DISPLAY: DisplayQuad = DisplayQuad(_LEFT_DISPLAY_PAIR,
+                                       _RIGHT_DISPLAY_PAIR,
+                                       _RA_RTC)
 
 # Create the RaFRAM instance
 _RA_FRAM: RaFRAM = RaFRAM(_I2C, _FRAM_ADDRESS)
 
-# Create the StateMachine instance
+# Create the StateMachine and command queue
 _STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM, _RA_RTC)
-# Command 'queue'
 _COMMAND_QUEUE: CommandQueue = CommandQueue()
 
 
@@ -1698,7 +1703,7 @@ def main() -> None:
 
     # Starting,
     # force initial display if compensated RA value...
-    _COMMAND_QUEUE.put(_CMD_BUTTON_1)
+    _COMMAND_QUEUE.put(CommandQueue.BUTTON_1)
 
     # Main loop
     while True:
