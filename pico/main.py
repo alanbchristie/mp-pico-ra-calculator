@@ -1,9 +1,16 @@
 """The real-time RA compensation calculator.
 
 Designed to run on a Raspberry Pi Pico using the
-Pimoroni customised MicroPython image.
+Pimoroni customised MicroPython image. The default
+pin configuration should work with the Pico and Tiny.
 """
 
+# Recommended hardware: -
+#
+# - Raspberry Pi Pico
+# - Buttons (pull down) on GP pins 4, 5, 6, and 7
+# - I2C (1) on GP pins 27 and 27
+#
 # Tested with: -
 #
 # - pimoroni-pico-v1.18.1-micropython-v1.18.uf2
@@ -94,10 +101,18 @@ _LONG_BUTTON_PRESS_MS: int = 2_000
 # A simple form of debounce.
 _BUTTON_DEBOUNCE_MS: int = 50
 
+# Control button pin designation.
+# We don't need a 'Pin.PULL_UP'
+# because the buttons on the 'Pico Breadboard' are pulled down.
+_BUTTON_1: Pin = Pin(4, Pin.IN)
+_BUTTON_2: Pin = Pin(5, Pin.IN)
+_BUTTON_3: Pin = Pin(6, Pin.IN)
+_BUTTON_4: Pin = Pin(7, Pin.IN)
+
 # Configured I2C controller and its GPIO pins
-_I2C_ID: int = 0
-_SDA: int = 16
-_SCL: int = 17
+_I2C_ID: int = 1
+_SDA: int = 26
+_SCL: int = 27
 
 # A MicroPython I2C object
 _I2C: I2C = I2C(id=_I2C_ID, scl=Pin(_SCL), sda=Pin(_SDA))
@@ -149,14 +164,6 @@ assert _FRAM_ADDRESS
 # i.e. 1 (smallest) == 0.05 and 20 (largest) == 1.0
 _MIN_BRIGHTNESS: int = 1
 _MAX_BRIGHTNESS: int = 20
-
-# Control button pin designation.
-# We don't need a 'Pin.PULL_UP'
-# because the buttons on the 'Pico Breadboard' are pulled down.
-_BUTTON_1: Pin = Pin(11, Pin.IN)
-_BUTTON_2: Pin = Pin(12, Pin.IN)
-_BUTTON_3: Pin = Pin(13, Pin.IN)
-_BUTTON_4: Pin = Pin(14, Pin.IN)
 
 # A list of 2-letter month names
 # Get name with simple lookup _MONTH_NAME[month_no]
