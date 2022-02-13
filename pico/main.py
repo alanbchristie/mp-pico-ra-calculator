@@ -144,7 +144,7 @@ _RTC_ADDRESS: Optional[int] = None
 if 0x52 in _DEVICE_ADDRESSES:
     _RTC_ADDRESS = 0x52
 if _RTC_ADDRESS:
-    print(f'RTC  device={hex(_RTC_ADDRESS)}')
+    print(f'RTC device={hex(_RTC_ADDRESS)}')
 else:
     print('RTC (not found)')
 assert _RTC_ADDRESS
@@ -196,8 +196,11 @@ def leap_year(year: int) -> bool:
     return year % 4 == 0 and year % 100 != 0 or year % 400 == 0
 
 
-def days_since_calibration(c_day: int, c_month: int,
-                           now_day: int, now_month: int, now_year: int)\
+def days_since_calibration(c_day: int,
+                           c_month: int,
+                           now_day: int,
+                           now_month: int,
+                           now_year: int)\
         -> int:
     """Returns the number of days since calibration. If calibration day was
     yesterday '1' is returned. If it's the calibration day, '0' is returned.
@@ -560,11 +563,27 @@ class DisplayPair:
     """
 
     # LTP305 bitmaps for key characters indexed by character ordinal.
-    # Digits, space and upper and lower-case letters.
+    # In this map we're just interested in digits, space, upper,
+    # and lower-case letters.
+    #
+    # Each ordinal list is a bitmap of the matrix LED columns,
+    # with 5 entries (one for each column of 7 LEDs).
+    # The list encodes the columns from left to right
+    # with the LSB representing the top LED.
+    #
+    # Bit +-+
+    #  0  |X| = 0x21
+    #  1  | |
+    #  2  | |
+    #  3  | |
+    #  4  | |
+    #  5  |X|
+    #  6  | |
+    #     +-+
+
     font: Dict[int, List[int]] = {
         32: [0x00, 0x00, 0x00, 0x00, 0x00],  # (space)
 
-        #        48: [0x3e, 0x51, 0x49, 0x45, 0x3e],  # 0
         48: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
         49: [0x00, 0x42, 0x7f, 0x40, 0x00],  # 1
         50: [0x42, 0x61, 0x51, 0x49, 0x46],  # 2
@@ -765,6 +784,8 @@ class DisplayQuad:
         self.r_matrix = right
 
     def set_brightness(self, brightness: int) -> None:
+        """Sets the display brightness, with a min and max value.
+        """
         assert brightness >= _MIN_BRIGHTNESS
         assert brightness <= _MAX_BRIGHTNESS
 
@@ -775,6 +796,10 @@ class DisplayQuad:
         self.r_matrix.set_brightness(self._brightness_f, True)
 
     def clear(self, left: bool = True, right: bool = True) -> None:
+        """Clears the list and/or right-hand displays.
+        """
+        assert left or right
+
         if left:
             self.l_matrix.clear()
             self.l_matrix.show()
@@ -928,19 +953,40 @@ class CommandQueue:
         self._queue = []
     
     def members(self) -> int:
+        """Returns number of members in the Queue.
+        """
         return len(self._queue)
 
     def clear(self) -> None:
+        """Empties the Queue.
+        """
         self._queue.clear()
 
     def put(self, command: int) -> None:
+        """Puts a command in the Queue.
+        """
         if len(self._queue) < self._queue_size:
             self._queue.append(command)
     
-    def get(self) -> Optional[int]:
-        if self.members():
-            return self._queue.pop(0)
-        return None
+    def get(self, timeout_ms: int) -> Optional[int]:
+        """Get a command from the queue, waiting for timeout_ms.
+        If timeout_ms is 0 the get blocks until a command is received."""
+        assert timeout_ms >= 0
+
+        if timeout_ms:
+            slept_ms: int = 0  # Approximate time spent in the loop
+            while slept_ms < timeout_ms:
+                if self.members():
+                    return self._queue.pop(0)
+                time.sleep_ms(100)  # type: ignore
+                slept_ms += 100
+            return None
+
+        # No timeout - block until command is present
+        while True:
+            if self.members():
+                return self._queue.pop(0)
+            time.sleep_ms(100)  # type: ignore
 
 
 class Button:
@@ -1286,12 +1332,6 @@ class StateMachine:
         """Process a command, where the actions depend on the
         current 'state'.
         """
-
-        if command == CommandQueue.KILL:
-            # A 'kill' command,
-            # Returning False means the app will stop.
-            print('Got kill command, leaving...')
-            return False
 
         if command == CommandQueue.TICK:
             # Internal TICK (500mS)
@@ -1732,15 +1772,20 @@ def main() -> None:
     _COMMAND_QUEUE.put(CommandQueue.DISPLAY)
 
     # Main loop
+    # We will break out of this on error
+    # or the reception of the kill command.
     while True:
 
-        # Wait for a command
-        cmd: Optional[int] = _COMMAND_QUEUE.get()
-        while cmd is None:
-            time.sleep_ms(250)  # type: ignore
-            cmd = _COMMAND_QUEUE.get()
-
+        # Block until a command iis received...
+        cmd: Optional[int] = _COMMAND_QUEUE.get(0)
         assert cmd
+        if cmd in [CommandQueue.KILL]:
+            # A 'kill' command,
+            # Returning False means the app will stop.
+            print('Got kill command, leaving...')
+            break
+
+        # Not 'kill' so pass the command to the StateMachine...
         result: bool = False
         try:
             result = _STATE_MACHINE.process_command(cmd)
