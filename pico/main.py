@@ -298,7 +298,7 @@ class BaseFRAM:
     """Base driver for the FRAM breakout.
     """
 
-    def __init__(self, i2c, address):
+    def __init__(self, i2c: I2C, address: int):
         """Create an instance for a devices at a given address.
         The device can reside at any of eight addresses, 0x50 - 0x57.
         """
@@ -347,6 +347,208 @@ class BaseFRAM:
 
         int_got: int = int.from_bytes(got, 'big')
         return int_got
+
+
+class RaFRAM(BaseFRAM):
+    """A specialised FRAM class. The base class provides basic byte reading
+    and writing, this class provides convenient RA-specific storage using the
+    underlying FRAM.
+
+    Here we provide methods to simplify the storage and retrieval of
+    'brightness', 'RA target' and 'calibration date', all persisted safely in
+    a FRAM I2C module.
+
+    Changes to values are written and cached minimising the number
+    of FRAM reads that take place.
+    """
+
+    # Default values,
+    # used when reading if no FRAM value exists.
+
+    # Default brightness (lowest)
+    DEFAULT_BRIGHTNESS: int = _MIN_BRIGHTNESS
+
+    # Markers.
+    # Values that prefix every stored value. These are used to indicate
+    # whether the corresponding (potentially multibyte) value
+    # is either valid or invalid.
+    # Markers (and data values) must be +ve byte values (0-127)
+    _INVALID: int = 0  # The value cannot be trusted
+    _VALID: int = 33  # The value can be trusted
+
+    # Memory Map
+    #
+    # +--------+----------------------------------
+    # | Offset | Purpose
+    # +--------+----------------------------------
+    # | *   0  | Brightness Marker
+    # |     1  | Brightness Value [1..20]
+    # | *   2  | RA Target Marker
+    # |     3  | RA Target (Hours) [0..23]
+    # |     4  | RA Target (Minutes) [0..59]
+    # | *   5  | Calibration Date Marker
+    # |     6  | Calibration Date (Day) [1..31]
+    # |     7  | Calibration Date (Month) [1..12]
+    # +--------+----------------------------------
+    _OFFSET_BRIGHTNESS: int = 0  # 1 byte
+    _OFFSET_RA_TARGET: int = 2  # 2 bytes
+    _OFFSET_CALIBRATION_DATE: int = 5  # 2 bytes
+
+    def __init__(self, i2c: I2C, address: int):
+        # Initialise the base class,
+        # it's the only one interested in i2c and address
+        BaseFRAM.__init__(self, i2c, address)
+
+        # Cached values of data.
+        # Set when reading or writing the corresponding values.
+        self._ra_target: Optional[RA] = None
+        self._brightness: Optional[int] = None
+        self._calibration_date: Optional[CalibrationDate] = None
+
+    def _write_value(self, offset: int, value: Union[int, List[int]]) -> None:
+        assert offset >= 0
+
+        # Set marker to invalid
+        # Write value (or values)
+        # Set marker to valid
+        BaseFRAM.write_byte(self, offset, RaFRAM._INVALID)
+        if isinstance(value, int):
+            assert value >= 0
+            assert value <= 127
+            BaseFRAM.write_byte(self, offset + 1, value)
+        else:
+            assert isinstance(value, list)
+            value_offset: int = offset + 1
+            for a_value in value:
+                assert a_value >= 0
+                assert a_value <= 127
+                BaseFRAM.write_byte(self, value_offset, a_value)
+                value_offset += 1
+        BaseFRAM.write_byte(self, offset, RaFRAM._VALID)
+
+    def _read_value(self, offset: int) -> int:
+        """Reads the value form the offset.
+        The offset provided is the marker, we read the value
+        after the marker.
+        """
+        assert offset >= 0
+        assert offset + 1 < 32_768
+
+        value: int = BaseFRAM.read_byte(self, offset + 1)
+        assert value >= 0
+
+        return value
+
+    def _read_values(self, offset: int, length: int) -> List[int]:
+        """Reads the values form the offset.
+        The offset provided is the marker, we start reading
+        after the marker.
+        """
+        assert offset >= 0
+        assert length > 0
+        assert offset + 1 + length < 32_768
+
+        value: List[int] = []
+        for value_offset in range(length):
+            value.append(BaseFRAM.read_byte(self, offset + 1 + value_offset))
+        assert len(value) == length
+
+        return value
+
+    def _is_value_valid(self, offset: int) -> bool:
+        assert offset >= 0
+
+        byte_value: int = BaseFRAM.read_byte(self, offset)
+        value: bool = byte_value == RaFRAM._VALID
+
+        return value
+
+    def read_brightness(self) -> int:
+
+        # Return the cached (last written) value if we have it
+        if self._brightness:
+            return self._brightness
+        # Is there a value in the FRAM?
+        # If so, read it, put it in the cache and return it.
+        if self._is_value_valid(RaFRAM._OFFSET_BRIGHTNESS):
+            self._brightness = self._read_value(RaFRAM._OFFSET_BRIGHTNESS)
+            return self._brightness
+        # No cached value, no stored value,
+        # so write and then return the default
+        self.write_brightness(RaFRAM.DEFAULT_BRIGHTNESS)
+        assert self._brightness
+        return self._brightness
+
+    def write_brightness(self, brightness: int) -> None:
+        assert brightness >= _MIN_BRIGHTNESS
+        assert brightness <= _MAX_BRIGHTNESS
+
+        # Write to FRAM
+        self._write_value(RaFRAM._OFFSET_BRIGHTNESS, brightness)
+
+        # Finally, save the value to the cached value
+        self._brightness = brightness
+
+    def read_ra_target(self) -> RA:
+
+        # Return the cached (last written) value if we have it
+        if self._ra_target:
+            return self._ra_target
+        # Is there a value in the FRAM?
+        # If so, read it, put it in the cache and return it.
+        if self._is_value_valid(RaFRAM._OFFSET_RA_TARGET):
+            value: List[int] = self._read_values(RaFRAM._OFFSET_RA_TARGET, 2)
+            self._ra_target = RA(value[0], value[1])
+            return self._ra_target
+        # No cached value,
+        # so write and then return the default
+        self.write_ra_target(DEFAULT_RA_TARGET)
+        return self._ra_target
+
+    def write_ra_target(self, ra_target: RA) -> None:
+        assert ra_target
+
+        # Write to FRAM
+        values: List[int] = [ra_target.h, ra_target.m]
+        self._write_value(RaFRAM._OFFSET_RA_TARGET, values)
+
+        # Finally, save the value to the cached value
+        self._ra_target = ra_target
+
+    def read_calibration_date(self) -> CalibrationDate:
+
+        # Return the cached (last written) value if we have it
+        if self._calibration_date:
+            return self._calibration_date
+        # Is there a value in the FRAM?
+        # If so, read it, put it in the cache and return it.
+        if self._is_value_valid(RaFRAM._OFFSET_CALIBRATION_DATE):
+            value: List[int] = \
+                self._read_values(RaFRAM._OFFSET_CALIBRATION_DATE, 2)
+            self._calibration_date = CalibrationDate(value[0], value[1])
+            return self._calibration_date
+        # No cached value,
+        # so write and then return the default
+        self.write_calibration_date(DEFAULT_CALIBRATION_DATE)
+        return self._calibration_date
+
+    def write_calibration_date(self, calibration_date: CalibrationDate) \
+            -> None:
+        assert calibration_date
+
+        # Write to FRAN
+        values: List[int] = [calibration_date.d, calibration_date.m]
+        self._write_value(RaFRAM._OFFSET_CALIBRATION_DATE, values)
+
+        # Finally, save the value to the cached value
+        self._calibration_date = calibration_date
+
+    def clear(self):
+        """Clears, invalidates, the RA FRAM values.
+        """
+        BaseFRAM.write_byte(self, RaFRAM._OFFSET_BRIGHTNESS, RaFRAM._INVALID)
+        BaseFRAM.write_byte(self, RaFRAM._OFFSET_RA_TARGET, RaFRAM._INVALID)
+        BaseFRAM.write_byte(self, RaFRAM._OFFSET_CALIBRATION_DATE, RaFRAM._INVALID)
 
 
 class DisplayPair:
@@ -701,207 +903,6 @@ class RaDisplay:
 
         self.l_matrix.show()
         self.r_matrix.show()
-
-
-class RaFRAM:
-    """A RA wrapper around a FRAM class. This class provides convenient
-    RA-specific storage using the underlying FRAM. Here we provide
-    methods to simplify the storage and retrieval of 'brightness',
-    'RA target' and 'calibration date', all persisted safely in a FRAM
-    module.
-
-    Changes to values are written and cached minimising the number
-    of FRAM reads that take place.
-    """
-
-    # Default values,
-    # used when reading if no FRAM value exists.
-
-    # Default brightness (lowest)
-    DEFAULT_BRIGHTNESS: int = _MIN_BRIGHTNESS
-
-    # Markers.
-    # Values that prefix every stored value. These are used to indicate
-    # whether the corresponding (potentially multibyte) value
-    # is either valid or invalid.
-    # Markers (and data values) must be +ve byte values (0-127)
-    _INVALID: int = 0  # The value cannot be trusted
-    _VALID: int = 33  # The value can be trusted
-
-    # Memory Map
-    #
-    # +--------+----------------------------------
-    # | Offset | Purpose
-    # +--------+----------------------------------
-    # | *   0  | Brightness Marker
-    # |     1  | Brightness Value [1..20]
-    # | *   2  | RA Target Marker
-    # |     3  | RA Target (Hours) [0..23]
-    # |     4  | RA Target (Minutes) [0..59]
-    # | *   5  | Calibration Date Marker
-    # |     6  | Calibration Date (Day) [1..31]
-    # |     7  | Calibration Date (Month) [1..12]
-    # +--------+----------------------------------
-    _OFFSET_BRIGHTNESS: int = 0  # 1 byte
-    _OFFSET_RA_TARGET: int = 2  # 2 bytes
-    _OFFSET_CALIBRATION_DATE: int = 5  # 2 bytes
-
-    def __init__(self, fram: BaseFRAM):
-        assert fram
-
-        # Save the FRAM reference
-        self._fram: BaseFRAM = fram
-
-        # Cached values of data.
-        # Set when reading or writing the corresponding values.
-        self._ra_target: Optional[RA] = None
-        self._brightness: Optional[int] = None
-        self._calibration_date: Optional[CalibrationDate] = None
-
-    def _write_value(self, offset: int, value: Union[int, List[int]]) -> None:
-        assert offset >= 0
-
-        # Set marker to invalid
-        # Write value (or values)
-        # Set marker to valid
-        self._fram.write_byte(offset, RaFRAM._INVALID)
-        if isinstance(value, int):
-            assert value >= 0
-            assert value <= 127
-            self._fram.write_byte(offset + 1, value)
-        else:
-            assert isinstance(value, list)
-            value_offset: int = offset + 1
-            for a_value in value:
-                assert a_value >= 0
-                assert a_value <= 127
-                self._fram.write_byte(value_offset, a_value)
-                value_offset += 1
-        self._fram.write_byte(offset, RaFRAM._VALID)
-
-    def _read_value(self, offset: int) -> int:
-        """Reads the value form the offset.
-        The offset provided is the marker, we read the value
-        after the marker.
-        """
-        assert offset >= 0
-        assert offset + 1 < 32_768
-
-        value: int = self._fram.read_byte(offset + 1)
-        assert value >= 0
-
-        return value
-
-    def _read_values(self, offset: int, length: int) -> List[int]:
-        """Reads the values form the offset.
-        The offset provided is the marker, we start reading
-        after the marker.
-        """
-        assert offset >= 0
-        assert length > 0
-        assert offset + 1 + length < 32_768
-
-        value: List[int] = []
-        for value_offset in range(length):
-            value.append(self._fram.read_byte(offset + 1 + value_offset))
-        assert len(value) == length
-
-        return value
-
-    def _is_value_valid(self, offset: int) -> bool:
-        assert offset >= 0
-
-        byte_value: int = self._fram.read_byte(offset)
-        value: bool = byte_value == RaFRAM._VALID
-
-        return value
-
-    def read_brightness(self) -> int:
-
-        # Return the cached (last written) value if we have it
-        if self._brightness:
-            return self._brightness
-        # Is there a value in the FRAM?
-        # If so, read it, put it in the cache and return it.
-        if self._is_value_valid(RaFRAM._OFFSET_BRIGHTNESS):
-            self._brightness = self._read_value(RaFRAM._OFFSET_BRIGHTNESS)
-            return self._brightness
-        # No cached value, no stored value,
-        # so write and then return the default
-        self.write_brightness(RaFRAM.DEFAULT_BRIGHTNESS)
-        assert self._brightness
-        return self._brightness
-
-    def write_brightness(self, brightness: int) -> None:
-        assert brightness >= _MIN_BRIGHTNESS
-        assert brightness <= _MAX_BRIGHTNESS
-
-        # Write to FRAM
-        self._write_value(RaFRAM._OFFSET_BRIGHTNESS, brightness)
-
-        # Finally, save the value to the cached value
-        self._brightness = brightness
-
-    def read_ra_target(self) -> RA:
-
-        # Return the cached (last written) value if we have it
-        if self._ra_target:
-            return self._ra_target
-        # Is there a value in the FRAM?
-        # If so, read it, put it in the cache and return it.
-        if self._is_value_valid(RaFRAM._OFFSET_RA_TARGET):
-            value: List[int] = self._read_values(RaFRAM._OFFSET_RA_TARGET, 2)
-            self._ra_target = RA(value[0], value[1])
-            return self._ra_target
-        # No cached value,
-        # so write and then return the default
-        self.write_ra_target(DEFAULT_RA_TARGET)
-        return self._ra_target
-
-    def write_ra_target(self, ra_target: RA) -> None:
-        assert ra_target
-
-        # Write to FRAM
-        values: List[int] = [ra_target.h, ra_target.m]
-        self._write_value(RaFRAM._OFFSET_RA_TARGET, values)
-
-        # Finally, save the value to the cached value
-        self._ra_target = ra_target
-
-    def read_calibration_date(self) -> CalibrationDate:
-
-        # Return the cached (last written) value if we have it
-        if self._calibration_date:
-            return self._calibration_date
-        # Is there a value in the FRAM?
-        # If so, read it, put it in the cache and return it.
-        if self._is_value_valid(RaFRAM._OFFSET_CALIBRATION_DATE):
-            value: List[int] = \
-                self._read_values(RaFRAM._OFFSET_CALIBRATION_DATE, 2)
-            self._calibration_date = CalibrationDate(value[0], value[1])
-            return self._calibration_date
-        # No cached value,
-        # so write and then return the default
-        self.write_calibration_date(DEFAULT_CALIBRATION_DATE)
-        return self._calibration_date
-
-    def write_calibration_date(self, calibration_date: CalibrationDate) \
-            -> None:
-        assert calibration_date
-
-        # Write to FRAN
-        values: List[int] = [calibration_date.d, calibration_date.m]
-        self._write_value(RaFRAM._OFFSET_CALIBRATION_DATE, values)
-
-        # Finally, save the value to the cached value
-        self._calibration_date = calibration_date
-
-    def clear(self):
-        """Clears, invalidates, the RA FRAM values.
-        """
-        self._fram.write_byte(RaFRAM._OFFSET_BRIGHTNESS, RaFRAM._INVALID)
-        self._fram.write_byte(RaFRAM._OFFSET_RA_TARGET, RaFRAM._INVALID)
-        self._fram.write_byte(RaFRAM._OFFSET_CALIBRATION_DATE, RaFRAM._INVALID)
 
 
 # The command queue - the object between the
@@ -1659,9 +1660,8 @@ _RA_RTC: RaRTC = RaRTC()
 _RA_DISPLAY: RaDisplay =\
     RaDisplay(_I2C, _RA_RTC, _DISPLAY_L_ADDRESS, _DISPLAY_R_ADDRESS)
 
-# Create the FRAM and RaFRAM instance
-_BASE_FRAM: BaseFRAM = BaseFRAM(_I2C, _FRAM_ADDRESS)
-_RA_FRAM: RaFRAM = RaFRAM(_BASE_FRAM)
+# Create the RaFRAM instance
+_RA_FRAM: RaFRAM = RaFRAM(_I2C, _FRAM_ADDRESS)
 
 # Create the StateMachine instance
 _STATE_MACHINE: StateMachine = StateMachine(_RA_DISPLAY, _RA_FRAM, _RA_RTC)
