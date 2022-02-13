@@ -643,7 +643,7 @@ class DisplayPair:
     CMD_MATRIX_L = 0x0E
     CMD_MATRIX_R = 0x01
 
-    def __init__(self, i2c, address: int = 0x61, brightness: float = 0.1):
+    def __init__(self, i2c, address: int = 0x61, brightness: float = 1.0):
         """Initialises a dual LTP305 LED matrix display, given a MicroPython
         I2C object and a device address.
 
@@ -668,7 +668,7 @@ class DisplayPair:
     def clear(self) -> None:
         """Clear both LED matrices.
 
-        Must call .show() to display changes.
+        Must call show() to display changes.
         """
         self._buf_matrix_left = [0 for _ in range(8)]
         self._buf_matrix_right = [0 for _ in range(8)]
@@ -915,12 +915,12 @@ class DisplayQuad:
 class CommandQueue:
 
     # CommandQueue commands (just unique integers)
-    BUTTON_1: int = 1           # Button 1 has been pressed
-    BUTTON_2: int = 2           # Button 2 has been pressed
-    BUTTON_2_LONG: int = 22     # Button 2 has been pressed for a long time
-    BUTTON_3: int = 3           # Button 3 has been pressed
-    BUTTON_4: int = 4           # Button 4 has been pressed
-    BUTTON_4_LONG: int = 44     # Button 4 has been pressed for a long time
+    DISPLAY: int = 1            # Button 1 has been pressed
+    PROGRAM: int = 2            # Button 2 has been pressed
+    PROGRAM_COMMIT: int = 22    # Button 2 has been pressed for a long time
+    DOWN: int = 3               # Button 3 has been pressed
+    UP: int = 4                 # Button 4 has been pressed
+    KILL: int = 44              # Button 4 has been pressed for a long time
     TICK: int = 10              # The timer has fired
 
     def __init__(self):
@@ -944,32 +944,39 @@ class CommandQueue:
 
 
 class Button:
+    """A class defining methods attached to the control buttons.
+    """
 
     def __init__(self):
+        """Create Pins and callbacks.
+        """
 
         # Control button pin designation.
         # We don't need a 'Pin.PULL_UP'
         # because the buttons on the 'Pico Breadboard' are pulled down.
-        self.b_display: Pin = Pin(_BUTTON_DISPLAY, Pin.IN)
-        self.b_program: Pin = Pin(_BUTTON_PROGRAM, Pin.IN)
-        self.b_down: Pin = Pin(_BUTTON_DOWN, Pin.IN)
-        self.b_up: Pin = Pin(_BUTTON_UP, Pin.IN)
+        self.pin_display: Pin = Pin(_BUTTON_DISPLAY, Pin.IN)
+        self.pin_program: Pin = Pin(_BUTTON_PROGRAM, Pin.IN)
+        self.pin_down: Pin = Pin(_BUTTON_DOWN, Pin.IN)
+        self.pin_up: Pin = Pin(_BUTTON_UP, Pin.IN)
 
-        self.b_display.irq(trigger=Pin.IRQ_RISING, handler=self.display)
-        self.b_program.irq(trigger=Pin.IRQ_RISING, handler=self.program)
-        self.b_down.irq(trigger=Pin.IRQ_RISING, handler=self.down)
-        self.b_up.irq(trigger=Pin.IRQ_RISING, handler=self.up)
+        self.pin_display.irq(trigger=Pin.IRQ_RISING, handler=self._display)
+        self.pin_program.irq(trigger=Pin.IRQ_RISING, handler=self._program)
+        self.pin_down.irq(trigger=Pin.IRQ_RISING, handler=self._down)
+        self.pin_up.irq(trigger=Pin.IRQ_RISING, handler=self._up)
 
     def detach(self) -> None:
+        """Removes the method callbacks from the Pins.
+        After this button presses will not invoke any methods.
+        """
 
         # Detach button callbacks
-        self.b_display.irq()
-        self.b_program.irq()
-        self.b_down.irq()
-        self.b_up.irq()
+        self.pin_display.irq()
+        self.pin_program.irq()
+        self.pin_down.irq()
+        self.pin_up.irq()
 
-    def display(self, pin: Pin) -> None:
-        """The '**DISPLAY** button. Creates the BUTTON_1 command.
+    def _display(self, pin: Pin) -> None:
+        """The '**DISPLAY** button. Creates the DISPLAY command.
 
         Pressing this when the display is off
         will display the current (real-time) RA axis compensation value.
@@ -984,22 +991,21 @@ class Button:
         pin.irq(handler=None)
         time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
         if pin.value():
-            _COMMAND_QUEUE.put(CommandQueue.BUTTON_1)
-        pin.irq(trigger=Pin.IRQ_RISING, handler=self.display)
+            _COMMAND_QUEUE.put(CommandQueue.DISPLAY)
+        pin.irq(trigger=Pin.IRQ_RISING, handler=self._display)
 
-    def program(self, pin: Pin) -> None:
-        """The **PROGRAM** button. Creates the BUTTON_2 and BUTTON_2_LONG
+    def _program(self, pin: Pin) -> None:
+        """The **PROGRAM** button. Creates the PROGRAM and PROGRAM_COMMIT
         commands.
 
         Pressing this on a programmable value is displayed (like the target RA)
-        enters the programming mode for the displayed value. IN programming mode
-        thr UP/DOWN buttons are used to alter the displayed value.
+        enters the programming mode for the displayed value. In programming
+        mode the UP/DOWN buttons are used to alter the displayed value.
 
-        The programming value is committed by holding this button for a few seconds
-        (_LONG_BUTTON_PRESS_MS). Programing mode is cancelled by hitting the
-        **DISPLAY** button.
+        The programming value is committed by holding this button for a few
+        seconds (_LONG_BUTTON_PRESS_MS). Programing mode is cancelled by
+        hitting the **DISPLAY** button.
         """
-
         pin.irq(handler=None)
         time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
         # Measure the time pressed.
@@ -1015,13 +1021,13 @@ class Button:
             up_ms: int = time.ticks_ms()  # type: ignore
             duration: int = time.ticks_diff(up_ms, down_ms)  # type: ignore
             if duration >= _LONG_BUTTON_PRESS_MS:
-                _COMMAND_QUEUE.put(CommandQueue.BUTTON_2_LONG)
+                _COMMAND_QUEUE.put(CommandQueue.PROGRAM_COMMIT)
             else:
-                _COMMAND_QUEUE.put(CommandQueue.BUTTON_2)
-        pin.irq(trigger=Pin.IRQ_RISING, handler=self.program)
+                _COMMAND_QUEUE.put(CommandQueue.PROGRAM)
+        pin.irq(trigger=Pin.IRQ_RISING, handler=self._program)
 
-    def down(self, pin: Pin) -> None:
-        """The **DOWN** button. Creates the BUTTON_3 command.
+    def _down(self, pin: Pin) -> None:
+        """The **DOWN** button. Creates the DOWN command.
 
         Pressing this when the display is on decreases
         the display brightness. In programming mode it decreases the value that
@@ -1031,19 +1037,18 @@ class Button:
         pin.irq(handler=None)
         time.sleep_ms(_BUTTON_DEBOUNCE_MS)  # type: ignore
         if pin.value():
-            _COMMAND_QUEUE.put(CommandQueue.BUTTON_3)
-        pin.irq(trigger=Pin.IRQ_RISING, handler=self.down)
+            _COMMAND_QUEUE.put(CommandQueue.DOWN)
+        pin.irq(trigger=Pin.IRQ_RISING, handler=self._down)
 
-    def up(self, pin: Pin) -> None:
-        """The **UP** button. Creates the BUTTON_4 and BUTTON_4_LONG
-        commands
+    def _up(self, pin: Pin) -> None:
+        """The **UP** button. Creates the UP and KILL commands.
 
         Pressing this when the display is on increases
         the display brightness. In programming mode it increases the value that
         is flashing.
 
-        A long press (programming or not) will result in a trigger
-        for the state machine toi exit.
+        A long press when the display is blank will result in a trigger
+        for the state machine to exit.
         """
 
         pin.irq(handler=None)
@@ -1061,20 +1066,10 @@ class Button:
             up_ms: int = time.ticks_ms()  # type: ignore
             duration: int = time.ticks_diff(up_ms, down_ms)  # type: ignore
             if duration >= _LONG_BUTTON_PRESS_MS:
-                _COMMAND_QUEUE.put(CommandQueue.BUTTON_4_LONG)
+                _COMMAND_QUEUE.put(CommandQueue.KILL)
             else:
-                _COMMAND_QUEUE.put(CommandQueue.BUTTON_4)
-        pin.irq(trigger=Pin.IRQ_RISING, handler=self.up)
-
-
-def tick(timer):
-    """A timer callback. Creates the TICK command.
-
-    Enabled only when display is on.
-    """
-    assert timer
-
-    _COMMAND_QUEUE.put(CommandQueue.TICK)
+                _COMMAND_QUEUE.put(CommandQueue.UP)
+        pin.irq(trigger=Pin.IRQ_RISING, handler=self._up)
 
 
 class StateMachine:
@@ -1292,7 +1287,7 @@ class StateMachine:
         current 'state'.
         """
 
-        if command == CommandQueue.BUTTON_4_LONG:
+        if command == CommandQueue.KILL:
             # A 'kill' command,
             # Returning False means the app will stop.
             print('Got kill command, leaving...')
@@ -1337,7 +1332,7 @@ class StateMachine:
             # Handled if we get here
             return True
 
-        if command == CommandQueue.BUTTON_1:
+        if command == CommandQueue.DISPLAY:
             # "DISPLAY" button
 
             # If not in programming mode we switch to another item to display.
@@ -1371,7 +1366,7 @@ class StateMachine:
             # If all else fails, nothing to do
             return True
 
-        if command == CommandQueue.BUTTON_2:
+        if command == CommandQueue.PROGRAM:
             # "PROGRAM" button
 
             # Into programming mode (from valid non-programming states)
@@ -1397,7 +1392,7 @@ class StateMachine:
                 # If we get here, nothing to do
             return True
 
-        if command == CommandQueue.BUTTON_2_LONG:
+        if command == CommandQueue.PROGRAM_COMMIT:
             # The program button's been pressed for a long time.
             # This should be used to 'save' any programming value.
 
@@ -1448,7 +1443,7 @@ class StateMachine:
             # Nothing to do yet
             return True
 
-        if command == CommandQueue.BUTTON_3:
+        if command == CommandQueue.DOWN:
             # "DOWN" button
 
             if self._state not in [StateMachine.S_IDLE]:
@@ -1465,7 +1460,7 @@ class StateMachine:
 
             return True
 
-        if command == CommandQueue.BUTTON_4:
+        if command == CommandQueue.UP:
             # "UP" button
 
             if self._state not in [StateMachine.S_IDLE]:
@@ -1677,6 +1672,16 @@ class StateMachine:
 
 # Global Objects
 
+def tick(timer):
+    """A timer callback. Creates the TICK command.
+
+    Enabled only when display is on.
+    """
+    assert timer
+
+    _COMMAND_QUEUE.put(CommandQueue.TICK)
+
+
 # Our RTC object (RV3028 wrapper).
 _RA_RTC: RaRTC = RaRTC()
 
@@ -1724,7 +1729,7 @@ def main() -> None:
 
     # Starting,
     # force initial display if compensated RA value...
-    _COMMAND_QUEUE.put(CommandQueue.BUTTON_1)
+    _COMMAND_QUEUE.put(CommandQueue.DISPLAY)
 
     # Main loop
     while True:
