@@ -650,19 +650,19 @@ class DisplayPair:
         122: [0x44, 0x64, 0x54, 0x4c, 0x44],  # z
     }
 
-    MODE = 0b00011000
-    OPTS = 0b00001110  # 1110 = 35mA, 0000 = 40mA
-    UPDATE = 0x01
+    MODE: int = 0b00011000
+    OPTS: int = 0b00001110  # 1110 = 35mA, 0000 = 40mA
+    UPDATE: int = 0x01
 
-    CMD_BRIGHTNESS = 0x19
-    CMD_MODE = 0x00
-    CMD_UPDATE = 0x0C
-    CMD_OPTIONS = 0x0D
+    CMD_BRIGHTNESS: int = 0x19
+    CMD_MODE: int = 0x00
+    CMD_UPDATE: int = 0x0C
+    CMD_OPTIONS: int = 0x0D
 
-    CMD_MATRIX_L = 0x0E
-    CMD_MATRIX_R = 0x01
+    CMD_MATRIX_L: int = 0x0E
+    CMD_MATRIX_R: int = 0x01
 
-    def __init__(self, i2c, address: int = 0x61, brightness: float = 1.0):
+    def __init__(self, i2c: I2C, address: int = 0x61, brightness: float = 1.0):
         """Initialises a dual LTP305 LED matrix display, given a MicroPython
         I2C object and a device address.
 
@@ -675,7 +675,7 @@ class DisplayPair:
         assert brightness >= 0.0
         assert brightness <= 1.0
 
-        self._bus = i2c
+        self._bus: I2C = i2c
         self._address: int = address
         self._buf_matrix_left: List[int] = []
         self._buf_matrix_right: List[int] = []
@@ -777,11 +777,11 @@ class DisplayQuad:
         assert left
         assert right
 
-        self._rtc = rtc
+        self._rtc: RaRTC = rtc
         self._brightness_f: float = _MIN_BRIGHTNESS / _MAX_BRIGHTNESS
 
-        self.l_matrix = left
-        self.r_matrix = right
+        self.l_matrix: DisplayPair = left
+        self.r_matrix: DisplayPair = right
 
     def set_brightness(self, brightness: int) -> None:
         """Sets the display brightness, with a min and max value.
@@ -950,7 +950,7 @@ class CommandQueue:
 
     def __init__(self):
         self._queue_size: int = 1
-        self._queue = []
+        self._queue: List[int] = []
     
     def members(self) -> int:
         """Returns number of members in the Queue.
