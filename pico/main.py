@@ -822,17 +822,18 @@ class DisplayQuad:
         rtc = self._rtc.datetime()
         # We just need 'HH:MM', which we'll call 'clock'.
         clock: str = f'{rtc[4]:02d}:{rtc[5]:02d}'
+        clock_hours: int = int(clock[:2])
+        clock_minutes: int = clock_hours * 60 + int(clock[3:])
 
         # Calculate the corrected RA.
         #
         # First, We add the current time to the target RA.
         target_ra_minutes: int = ra_target.h * 60 + ra_target.m
-        clock_hours: int = int(clock[:2])
-        clock_minutes: int = clock_hours * 60 + int(clock[3:])
         scope_ra_minutes: int = target_ra_minutes + clock_minutes
         # Then, we add 1 minute for every 6 hours on the clock.
         # i.e. after every 6 hours the celestial bodies will move by 1 minute.
         # This accommodates the sky's progression for the current day.
+        # The sub-day offset is a measure of these 'RA 1-minute' periods (0-3)
         sub_day_offset: int = clock_hours // 6
         scope_ra_minutes += sub_day_offset
         # Then, add 4 minutes for each whole day since calibration.
@@ -849,18 +850,34 @@ class DisplayQuad:
                                                    date_month,
                                                    date_year)
         assert elapsed_days >= 0
-        # If calibration was on the 4th and today is the 5th the days between
-        # the dates is '1' but, the first 24 hours is handled by the
-        # 'sub_day_offset' so we must only count whole days, i.e. we subtract
-        # '1' from the result to accommodate the
-        # 'sub_day_offset'.
-        whole_days: int = elapsed_days - 1 if elapsed_days else 0
-        whole_days_offset: int = 4 * whole_days
-        scope_ra_minutes += whole_days_offset
+
+        # Note: If today is 'calibration day' (i.e. elapsed days is zero)
+        #       then the Axis will be aligned perfectly at midnight.
+        #       For every 6 hours away from midnight we *subtract*
+        #       1 RA minute.
+        if elapsed_days == 0:
+            # The sub-day offset is a value of 0-3.
+            # subtract '4 - sub_day_offset'
+            scope_ra_minutes -= 4 - sub_day_offset
+        else:
+            # If calibration was on the 4th and today is the 5th the days
+            # between the dates is '1' but, the first 24 hours is handled by
+            # the 'sub_day_offset' so we must only count whole days,
+            # i.e. we subtract '1' from the result to accommodate the
+            # 'sub_day_offset'.
+            whole_days: int = elapsed_days - 1
+            whole_days_offset: int = 4 * whole_days
+            scope_ra_minutes += whole_days_offset
+
         # Finally, if the resultant minutes amounts to more than 24 hours
-        # then wrap the time, i.e. 24:01 becomes 0:01.
+        # then wrap the time, i.e. 24:01 becomes 0:01. Also,
+        # if it's less than 0 (it can be due to 'calibration day' subtractions)
+        # then add a day, wrapping it back into a valid RA value.
         if scope_ra_minutes >= _DAY_MINUTES:
             scope_ra_minutes -= _DAY_MINUTES
+        elif scope_ra_minutes < 0:
+            scope_ra_minutes += _DAY_MINUTES
+
         # Convert minutes to hours and minutes,
         # which gives us our corrected RA axis value.
         scope_ra_hours: int = scope_ra_minutes // 60
