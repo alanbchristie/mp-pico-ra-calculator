@@ -23,7 +23,7 @@ except ImportError:
 
 # pylint: disable=import-error
 import micropython  # type: ignore
-from machine import I2C, Pin, Timer  # type: ignore
+from machine import ADC, I2C, Pin, Timer  # type: ignore
 from ucollections import namedtuple  # type: ignore
 from pimoroni_i2c import PimoroniI2C  # type: ignore
 from breakout_rtc import BreakoutRTC  # type: ignore
@@ -584,6 +584,9 @@ class DisplayPair:
     font: Dict[int, List[int]] = {
         32: [0x00, 0x00, 0x00, 0x00, 0x00],  # (space)
 
+        43: [0x08, 0x08, 0x3e, 0x08, 0x08],  # +
+        45: [0x08, 0x08, 0x08, 0x08, 0x08],  # -
+
         48: [0x3e, 0x41, 0x41, 0x41, 0x3e],  # O
         49: [0x00, 0x42, 0x7f, 0x40, 0x00],  # 1
         50: [0x42, 0x61, 0x51, 0x49, 0x46],  # 2
@@ -621,6 +624,8 @@ class DisplayPair:
         88: [0x63, 0x14, 0x08, 0x14, 0x63],  # X
         89: [0x03, 0x04, 0x78, 0x04, 0x03],  # Y
         90: [0x61, 0x51, 0x49, 0x45, 0x43],  # Z
+
+        94: [0x02, 0x05, 0x02, 0x00, 0x00],  # ^ (used for degrees)
 
         97: [0x20, 0x54, 0x54, 0x54, 0x78],  # a
         98: [0x7f, 0x48, 0x44, 0x44, 0x38],  # b
@@ -770,6 +775,9 @@ class DisplayQuad:
     target RA, the current time, and the calibration date.
     """
 
+    # Temperature sensor 3.3v conversion factor
+    T_COVERT: float = 3.3 / 65535
+
     def __init__(self, left: DisplayPair, right: DisplayPair, rtc: RaRTC):
         """Initialises the display pair object. Given two display pairs,
         left and right displays.
@@ -782,6 +790,9 @@ class DisplayQuad:
 
         self.l_matrix: DisplayPair = left
         self.r_matrix: DisplayPair = right
+
+        # The internal temperature sensor.
+        self._t_sensor: ADC = ADC(4)
 
     def set_brightness(self, brightness: int) -> None:
         """Sets the display brightness, with a min and max value.
@@ -931,6 +942,24 @@ class DisplayQuad:
 
         # Display
         self.show(clock)
+
+    def show_temperature(self) -> None:
+        """Displays the current internal Pico temperature,
+        available on ADC(4)."""
+        # What's the temperature voltage (0.0 - 3.3)
+        reading_3v3: float = self._t_sensor.read_u16() * DisplayQuad.T_COVERT
+        # And volts to temperature...
+        temperature: int = int(27 - (reading_3v3 - 0.706) / 0.001722)
+        # Limiting to -99..+99...
+        if temperature > 0:
+            temperature = min(temperature, 99)
+            t_str: str = f'+{temperature:2}^'
+        else:
+            temperature = max(temperature, -99)
+            t_str: str = f'{temperature:3}^'
+        # Show the temperature as a 4-character string (-99 to 999) with a '^'
+        # that's converted to the degree symbol...
+        self.show(t_str)
 
     def show(self, value: str) -> None:
         """Set the display, given a 4-digit string '[HH][MM]'.
@@ -1144,11 +1173,12 @@ class StateMachine:
     S_DISPLAY_RA_TARGET: int = 2
     S_DISPLAY_CLOCK: int = 3
     S_DISPLAY_C_DATE: int = 4
-    S_PROGRAM_RA_TARGET_H: int = 5
-    S_PROGRAM_RA_TARGET_M: int = 6
-    S_PROGRAM_CLOCK: int = 7
-    S_PROGRAM_C_DAY: int = 8
-    S_PROGRAM_C_MONTH: int = 9
+    S_DISPLAY_TEMPERATURE: int = 5
+    S_PROGRAM_RA_TARGET_H: int = 11
+    S_PROGRAM_RA_TARGET_M: int = 12
+    S_PROGRAM_CLOCK: int = 13
+    S_PROGRAM_C_DAY: int = 14
+    S_PROGRAM_C_MONTH: int = 15
 
     # Timer period (milliseconds).
     # When it's enabled a TICK command is issued at this rate.
@@ -1402,6 +1432,8 @@ class StateMachine:
             if self._state == StateMachine.S_DISPLAY_RA:
                 return self._to_display_ra_target()
             if self._state == StateMachine.S_DISPLAY_RA_TARGET:
+                return self._to_display_temperature()
+            if self._state == StateMachine.S_DISPLAY_TEMPERATURE:
                 return self._to_display_clock()
             if self._state == StateMachine.S_DISPLAY_CLOCK:
                 return self._to_display_calibration_date()
@@ -1434,7 +1466,7 @@ class StateMachine:
             if self._state == StateMachine.S_DISPLAY_C_DATE:
                 return self._to_program_calibration_day()
 
-                # Move from left to right editing
+            # Move from left to right editing
             # Applies when editing the RA Target or Calibration Date
             if self._state == StateMachine.S_PROGRAM_RA_TARGET_H:
                 return self._to_program_ra_target_m()
@@ -1446,7 +1478,7 @@ class StateMachine:
             if self._state == StateMachine.S_PROGRAM_C_MONTH:
                 return self._to_program_calibration_day()
 
-                # If we get here, nothing to do
+            # If we get here, nothing to do
             return True
 
         if command == CommandQueue.PROGRAM_COMMIT:
@@ -1587,6 +1619,21 @@ class StateMachine:
         # Initialise state variables
         self._start_timer()
         self._display.show_ra_target(self._ra_target)
+
+        return True
+
+    def _to_display_temperature(self) -> bool:
+        """Actions on entry to the DISPLAY_TEMPERATURE state.
+        """
+
+        # Always clear any programming
+        self._clear_program_mode()
+
+        # Always set the new state
+        self._state = StateMachine.S_DISPLAY_TEMPERATURE
+        # Initialise state variables
+        self._start_timer()
+        self._display.show_temperature()
 
         return True
 
