@@ -775,8 +775,8 @@ class DisplayQuad:
     target RA, the current time, and the calibration date.
     """
 
-    # Temperature sensor 3.3v conversion factor
-    T_COVERT: float = 3.3 / 65535
+    # Temperature sensor reading to voltage conversion
+    ADC_TO_VOLTS: float = 3.3 / 65535
 
     def __init__(self, left: DisplayPair, right: DisplayPair, rtc: RaRTC):
         """Initialises the display pair object. Given two display pairs,
@@ -791,7 +791,8 @@ class DisplayQuad:
         self.l_matrix: DisplayPair = left
         self.r_matrix: DisplayPair = right
 
-        # The internal temperature sensor.
+        # The Pico's internal temperature sensor,
+        # Available on ADC 4.
         self._t_sensor: ADC = ADC(4)
 
     def set_brightness(self, brightness: int) -> None:
@@ -944,22 +945,24 @@ class DisplayQuad:
         self.show(clock)
 
     def show_temperature(self) -> None:
-        """Displays the current internal Pico temperature,
-        available on ADC(4)."""
-        # What's the temperature voltage (0.0 - 3.3)
-        reading_3v3: float = self._t_sensor.read_u16() * DisplayQuad.T_COVERT
-        # And volts to temperature...
-        temperature: int = int(27 - (reading_3v3 - 0.706) / 0.001722)
-        # Limiting to -99..+99...
-        if temperature > 0:
-            temperature = min(temperature, 99)
-            t_str: str = f'+{temperature:2}^'
+        """Displays the current internal Pico temperature.
+        """
+        # What's the temperature ADC voltage? (0.0 - 3.3)
+        reading_3v3: float = self._t_sensor.read_u16()\
+            * DisplayQuad.ADC_TO_VOLTS
+        # Converts volts to celsius...
+        celsius: int = int(27 - (reading_3v3 - 0.706) / 0.001722)
+        # Limiting to -99..+99 and converting to a string.
+        # i.e. '-99^' to '+99^' padding to left with spaces: ' -1^'
+        # where '^' is interpreted by the display character set
+        # as the degree symbol...
+        if celsius > 0:
+            celsius = min(celsius, 99)
+            celsius_str: str = f'+{celsius:2}^'
         else:
-            temperature = max(temperature, -99)
-            t_str: str = f'{temperature:3}^'
-        # Show the temperature as a 4-character string (-99 to 999) with a '^'
-        # that's converted to the degree symbol...
-        self.show(t_str)
+            celsius = max(celsius, -99)
+            celsius_str = f'{celsius:3}^'
+        self.show(celsius_str)
 
     def show(self, value: str) -> None:
         """Set the display, given a 4-digit string '[HH][MM]'.
