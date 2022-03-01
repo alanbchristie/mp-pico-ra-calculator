@@ -35,6 +35,8 @@ provides seating for all the devices and some handy buttons: -
 
 ---
 
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/yellow_img.png)](https://www.buymeacoffee.com/alanbchristie)
+
 [rv3028 application manual]: https://www.microcrystal.com/fileadmin/Media/Products/RTC/App.Manual/RV-3028-C7_App-Manual.pdf
 [dot-matrix]: https://shop.pimoroni.com/products/led-dot-matrix-breakout?variant=32274405621843
 [fram]: https://shop.pimoroni.com/products/adafruit-i2c-non-volatile-fram-breakout-256kbit-32kbyte
